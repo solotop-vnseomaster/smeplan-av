@@ -28,6 +28,21 @@ DEFINE_GUID(SMEPLANAV_SUBLAYER_GUID,
 // trong kernel de tranh loi cap phat bo nho tai IRQL cao); PUSH tu
 // service qua IOCTL, KHONG bao gio tu goi ra ngoai kernel de tra cuu (do
 // se lam cham duong dan ket noi TCP/UDP that).
+// [HAN CHE MOI TRUONG — gioi han da biet, chua sua trong ban nay]
+// SmePlanAvFwCacheLookup/SmePlanAvFwCacheUpsert (wfp_callout.c) quet TUYEN TINH toi
+// da SMEPLANAV_FW_CACHE_CAPACITY phan tu DUOI spinlock CacheLock cho MOI ket
+// noi outbound (classifyFn chay tren duong dan ket noi TCP/UDP that, xem
+// [QUYET DINH TRIEN KHAI QUAN TRONG NHAT] dau wfp_callout.c) — O(N) thay vi
+// O(1)/O(log N) cua mot bang bam/cay that. Khi cache day, SmePlanAvFwCacheUpsert
+// da co fail-safe ghi trong chinh no (bo qua upsert moi, khong eviction) —
+// nhung chi phi quet TUYEN TINH van con voi MOI ket noi, ke ca khi cache
+// chua day. Mot redesign dung bang bam (vi du bam theo (ProcessPath,
+// RemotePort, Protocol) voi danh sach lien ket cho moi bucket) hoac LRU that
+// se giai quyet ca hai van de (toc do tra cuu VA eviction hop ly khi day),
+// nhung day la thay doi cau truc du lieu lon — KHONG thuc hien "mu" trong
+// phien khong co trinh bien dich WDK de kiem chung (rui ro loi con tro/khoa
+// cao hon loi ich trong pham vi lan sua nay). Ghi lai ro rang de ban sua
+// sau co du ngu canh quyet dinh co dang lam hay khong.
 #define SMEPLANAV_FW_CACHE_CAPACITY 4096
 #define SMEPLANAV_FW_MAX_PATH_CHARS 260
 
