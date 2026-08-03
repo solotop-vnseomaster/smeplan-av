@@ -6,13 +6,10 @@ namespace Antivirus.Service.Data;
 // DATA-01/02: bang app_rules dung schema data-models/04-du-lieu.md, index
 // theo hash va publisher de phuc vu thu tu tra cuu uu tien hash truoc,
 // publisher sau (business-rules/05 muc Process Trust Decision).
-public sealed class RuleStore
+public sealed class RuleStore : SqliteStoreBase
 {
-    private readonly string _connectionString;
-
-    public RuleStore(string dbPath)
+    public RuleStore(string dbPath) : base(dbPath)
     {
-        _connectionString = $"Data Source={dbPath}";
         Initialize();
     }
 
@@ -35,13 +32,29 @@ public sealed class RuleStore
             CREATE INDEX IF NOT EXISTS idx_rules_publisher ON app_rules(publisher_thumbprint);
             """;
         cmd.ExecuteNonQuery();
-    }
 
-    private SqliteConnection Open()
-    {
-        var conn = new SqliteConnection(_connectionString);
-        conn.Open();
-        return conn;
+        // [SUA LOI TRUNG BINH] TRUOC DAY idx_rules_hash chi la INDEX thuong
+        // (khong UNIQUE) — hai request danh gia process trung thoi diem cho
+        // CUNG mot hash (ca hai deu FindByHash() truoc, khong thay, roi deu
+        // Add() rule "AllowAlways" rieng — TOCTOU) co the tao ra HAI ban ghi
+        // scope=hash trung sha256_hash, thieu nhat quan (FindByHash dung
+        // LIMIT 1 nen chi thay MOT trong hai, ban con lai la du thua vinh
+        // vien, co the mang action khac neu nguoi dung doi y giua hai lan).
+        // Sua: them UNIQUE INDEX rieng phan (partial index, CHI ap dung cho
+        // scope='hash') tren sha256_hash — khong dung UNIQUE cho TOAN BO
+        // cot vi cac rule scope='publisher' co the co sha256_hash rong ""
+        // (xem ProcessTrustEngine.cs nhanh "khong hash duoc file nhung co
+        // publisher hop le"), nhieu rule nhu vay hop le cung ton tai song
+        // song. "CREATE UNIQUE INDEX IF NOT EXISTS" se tu dong that bai (nem
+        // exception) neu DB cu (tao truoc ban sua nay) da lo co san du lieu
+        // trung — chap nhan duoc vi day la truong hop hiem va can duoc phat
+        // hien thay vi am tham bo qua.
+        using var uniqueCmd = conn.CreateCommand();
+        uniqueCmd.CommandText = """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_rules_hash_unique
+                ON app_rules(sha256_hash) WHERE scope = 'hash';
+            """;
+        uniqueCmd.ExecuteNonQuery();
     }
 
     // business-rules/05: "tra rule theo thu tu hash roi publisher"

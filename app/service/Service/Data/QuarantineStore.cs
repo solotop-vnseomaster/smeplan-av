@@ -6,13 +6,10 @@ namespace Antivirus.Service.Data;
 // DATA-03: QuarantineRecord — bang SQLite rieng, KHONG chung bang voi
 // app_rules (data-models/04 muc QuarantineRecord). Da bo sung truong
 // `status` theo de xuat thong nhat trong 00-doi-chieu-cheo.md.
-public sealed class QuarantineStore
+public sealed class QuarantineStore : SqliteStoreBase
 {
-    private readonly string _connectionString;
-
-    public QuarantineStore(string dbPath)
+    public QuarantineStore(string dbPath) : base(dbPath)
     {
-        _connectionString = $"Data Source={dbPath}";
         Initialize();
     }
 
@@ -33,13 +30,6 @@ public sealed class QuarantineStore
             );
             """;
         cmd.ExecuteNonQuery();
-    }
-
-    private SqliteConnection Open()
-    {
-        var conn = new SqliteConnection(_connectionString);
-        conn.Open();
-        return conn;
     }
 
     public void Add(QuarantineRecord record)

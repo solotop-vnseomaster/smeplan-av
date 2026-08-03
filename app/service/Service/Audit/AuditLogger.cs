@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text;
 using System.Text.Json;
 using Antivirus.Service.Models;
 
@@ -15,11 +16,37 @@ public sealed class AuditLogger
     private readonly ConcurrentQueue<AuditEvent> _recentForUi = new();
     private const int MaxRecentInMemory = 500;
 
+    // Cache san encoding UTF-8 KHONG BOM (giong het File.AppendAllText mac
+    // dinh) de tranh validate/tao lai encoder o moi lan goi Log().
+    private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
+
     public AuditLogger(string logPath)
     {
         _logPath = logPath;
     }
 
+    // [DA THU VA TU CHOI: giu mot FileStream mo suot doi song AuditLogger]
+    // Phuong an "giu handle mo" (nhu de xuat trong code review) DA duoc thu
+    // nghiem that su o day va bi LOAI BO sau khi chay dotnet test: giu MOT
+    // handle GHI mo lien tuc (du tu mo voi FileShare.ReadWrite) khien MOI
+    // lan File.ReadAllLines/File.ReadAllText/File.WriteAllText tu BEN NGOAI
+    // (ca PruneToMaxLines/ClearAll cua CHINH class nay, lan AuditLoggerTests)
+    // nem IOException "file dang duoc tien trinh khac su dung" — vi cac ham
+    // File.* do mac dinh tu mo voi FileShare.Read (chi cho phep chia se voi
+    // handle KHONG co quyen Ghi), xung dot voi bat ky handle Ghi nao dang mo
+    // du ban than no cho phep chia se rong den dau. Day la gioi han cua
+    // Windows file sharing, khong the vuot qua tu phia AuditLogger. Vi
+    // AuditLoggerTests.cs (va chinh PruneToMaxLines/ClearAll) doc file truc
+    // tiep bang cac ham File.* nay ngay sau khi goi Log(), giu handle mo se
+    // pha vo hanh vi ma code khac dang phu thuoc — vi pham dieu kien "khong
+    // duoc doi semantics ma code/test khac dang dua vao". Sua thay the bang
+    // mot cai thien AN TOAN HON: van mo/ghi/dong MOI lan goi (giu nguyen kha
+    // nang cac tien trinh/API khac doc file bat ky luc nao, dung nhu truoc),
+    // nhung ghi thang byte UTF-8 da encode san qua FileStream tho thay vi di
+    // qua StreamWriter+Encoder cua File.AppendAllText — giam cap phat/kiem
+    // tra encoding lap lai moi lan goi trong pham vi giu lock, ma khong doi
+    // dinh dang file tren dia hay share-mode nguoi doc ben ngoai dang phu
+    // thuoc.
     public void Log(string category, string summary, object? detail = null)
     {
         var evt = new AuditEvent
@@ -32,9 +59,11 @@ public sealed class AuditLogger
         };
 
         var line = JsonSerializer.Serialize(evt);
+        var bytes = Utf8NoBom.GetBytes(line + Environment.NewLine);
         lock (_fileLock)
         {
-            File.AppendAllText(_logPath, line + Environment.NewLine);
+            using var stream = new FileStream(_logPath, FileMode.Append, FileAccess.Write, FileShare.Read);
+            stream.Write(bytes, 0, bytes.Length);
         }
 
         _recentForUi.Enqueue(evt);
