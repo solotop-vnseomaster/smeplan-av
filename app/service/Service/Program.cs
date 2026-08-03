@@ -293,7 +293,20 @@ app.MapPost("/api/downloads/{id}/action", (DownloadsDecisionBroker broker, Quara
 
 // --- Full scan ---
 app.MapPost("/api/scan/full/start", (FullScanService fs, StartScanRequest req) =>
-    fs.Start(req.VolumeRoot) ? Results.Ok() : Results.BadRequest(new { error = "Da co scan dang chay" }));
+{
+    // [SUA LOI NGHIEM TRONG] Xem PathUtil.IsLocalDrivePath — cung lo hong
+    // forced-authentication/NTLM-relay da vay o /api/scan/file nhung o day
+    // qua VolumeRoot: truoc day dua thang vao Directory.EnumerateFiles/USN
+    // journal ma khong kiem tra gi. Mot VolumeRoot dang UNC (\\attacker-
+    // host\share) se khien tien trinh SYSTEM tu ket noi/xac thuc SMB toi may
+    // chu do attacker chi dinh ngay khi enumerate, khong can dieu kien gi
+    // dac biet ngoai viec goi duoc endpoint nay (chi can token API cuc bo).
+    if (!Antivirus.Service.Common.PathUtil.IsLocalDrivePath(req.VolumeRoot))
+    {
+        return Results.BadRequest(new { error = "Chi chap nhan duong dan cuc bo tren o dia (khong ho tro UNC/duong dan mang)" });
+    }
+    return fs.Start(req.VolumeRoot) ? Results.Ok() : Results.BadRequest(new { error = "Da co scan dang chay" });
+});
 app.MapPost("/api/scan/full/pause", (FullScanService fs) => { fs.Pause(); return Results.Ok(); });
 app.MapPost("/api/scan/full/resume", (FullScanService fs) => { fs.Resume(); return Results.Ok(); });
 app.MapPost("/api/scan/full/cancel", (FullScanService fs) => { fs.Cancel(); return Results.Ok(); });
