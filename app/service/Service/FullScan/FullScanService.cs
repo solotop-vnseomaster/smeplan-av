@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using Antivirus.Service.Archive;
@@ -107,6 +108,19 @@ public sealed class FullScanService
         _progress.CachedCount = 0;
         _progress.StartedAt = DateTimeOffset.UtcNow;
         _progress.FinishedAt = null;
+        // [SUA LOI] TRUOC DAY chi reset _cachedBacking — 4 backing field con
+        // lai (_filesScannedBacking, _maliciousBacking, _suspiciousBacking,
+        // _errorBacking) KHONG duoc dua ve 0. _progress.XxxCount o tren tuy
+        // duoc gan = 0 ngay tai day, nhung ngay sau do ScanOneFile lai gan
+        // _progress.XxxCount = _xxxBacking (backing van con gia tri TICH
+        // LUY tu (cac) lan quet TRUOC), khien so lieu hien thi tu lan quet
+        // thu 2 tro di bi LECH PHA (cao hon thuc te, cong don qua nhieu lan
+        // quet) ngay ca khi UI vua duoc reset ve 0. Sua: reset toan bo 5
+        // backing field, khong chi mot.
+        _filesScannedBacking = 0;
+        _maliciousBacking = 0;
+        _suspiciousBacking = 0;
+        _errorBacking = 0;
         _cachedBacking = 0;
         _flaggedItems.Clear();
 
@@ -251,18 +265,54 @@ public sealed class FullScanService
                 {
                     try
                     {
-                        // NFR-PERF-04: giam toc (KHONG dung han) khi nguoi
-                        // dung vua tuong tac gan day, khoi phuc toc do day
-                        // du khi may idle qua 60s. Truoc day dung mot vong
-                        // lap chan cung o tang enumerate — tren mot may
-                        // dang duoc dung lien tuc (gan nhu khong bao gio co
-                        // 2 giay lien tuc khong co input), vong lap do khien
-                        // scan treo gan nhu vinh vien thay vi chi cham lai.
-                        // Sua lai: throttle o TUNG worker bang mot khoang
-                        // tre bi chan (bounded delay), luon dam bao tien do
-                        // tien len.
-                        ThrottleForUserActivity(ct);
-                        ScanOneFile(currentFile);
+                        try
+                        {
+                            // NFR-PERF-04: giam toc (KHONG dung han) khi nguoi
+                            // dung vua tuong tac gan day, khoi phuc toc do day
+                            // du khi may idle qua 60s. Truoc day dung mot vong
+                            // lap chan cung o tang enumerate — tren mot may
+                            // dang duoc dung lien tuc (gan nhu khong bao gio co
+                            // 2 giay lien tuc khong co input), vong lap do khien
+                            // scan treo gan nhu vinh vien thay vi chi cham lai.
+                            // Sua lai: throttle o TUNG worker bang mot khoang
+                            // tre bi chan (bounded delay), luon dam bao tien do
+                            // tien len.
+                            ThrottleForUserActivity(ct);
+                            ScanOneFile(currentFile);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            // Huy that su (nguoi dung bam Cancel) — de RunScan
+                            // xu ly nhu truoc (khong nuot, khong coi la loi
+                            // file rieng le).
+                            throw;
+                        }
+                        catch (Exception ex)
+                        {
+                            // [SUA LOI NGHIEM TRONG] TRUOC DAY KHONG co catch
+                            // rieng o day — neu ScanOneFile (hoac bat ky buoc
+                            // nao ben trong) nem ra MOT ngoai le ngoai du kien
+                            // (bug, dieu kien bien chua xu ly, loi I/O hiem
+                            // gap chua duoc bat noi bo...), ngoai le do bay
+                            // len toi Task.WaitAll(tasks, ct) thanh
+                            // AggregateException, khien TOAN BO scan bi HUY
+                            // qua catch(Exception) ngoai cung cua RunScan —
+                            // MOT file loi lam sap ca lan quet hang tram
+                            // nghin file khac. Dong thoi vi
+                            // resumeTracker.Complete() KHONG duoc goi cho seq
+                            // nay, watermark bi ket VINH VIEN tai day (moi seq
+                            // lon hon khong bao gio duoc coi la "lien tuc da
+                            // hoan tat"), chan luon viec luu resume state cho
+                            // CA CAC FILE DA QUET XONG SAU no. Sua: bat rieng,
+                            // ghi log loi va COI FILE NAY LA DA XU LY XONG
+                            // (du la loi) de watermark/resume van tien len
+                            // binh thuong, KHONG nem lai — scan tiep tuc voi
+                            // cac file con lai thay vi huy toan bo.
+                            _logger.LogError(ex,
+                                "Loi khong luong truoc khi quet file {Path} — bo qua file nay (coi la da xu ly xong de khong ket watermark), tiep tuc quet cac file con lai",
+                                currentFile);
+                        }
+
                         var toPersist = resumeTracker.Complete(currentSeq, currentFile);
                         if (toPersist is not null) SaveResumeState(volumeRoot, toPersist);
                     }
@@ -368,9 +418,33 @@ public sealed class FullScanService
         return TimeSpan.FromSeconds(5); // <10MB: da qua du cho hash+heuristic binh thuong
     }
 
+    // [SUA LOI] Tac vu Task.Run BEN TRONG ScanWithTimeout (doc file/quet
+    // thuc su) KHONG bi gioi han boi semaphore chinh trong RunScan — semaphore
+    // do chi bao boc WORKER BEN NGOAI va da duoc Release() ngay khi
+    // ScanWithTimeout tra ve, KE CA khi tra ve vi TIMEOUT (tac vu ben trong
+    // van con chay ngam, xem ghi chu duoi). Neu nhieu file LIEN TIEP timeout
+    // that (vi du mot thu muc day socket/named pipe/tai nguyen bi khoa vinh
+    // vien), moi lan nhu vay de lai MOT tac vu "mo coi" tren ThreadPool ma
+    // KHONG CO GIOI HAN nao ve so luong tich luy theo thoi gian — ve ly
+    // thuyet co the dan toi can kiet ThreadPool. Dung mot semaphore RIENG
+    // (tach biet voi semaphore chinh cua RunScan) de gioi han so luong tac
+    // vu quet dang chay dong thoi (ke ca cac tac vu da "mo coi" do timeout);
+    // cho doi CO GIOI HAN (khong vo han, giu nguyen tac "luon co tien do")
+    // truoc khi khoi tao MOT tac vu quet moi — neu het thoi gian cho van
+    // chua co slot, van tiep tuc (khong chan scan) nhung ghi log canh bao de
+    // biet ThreadPool dang chiu ap luc.
+    private readonly SemaphoreSlim _scanWorkerLimiter = new(Math.Max(4, Environment.ProcessorCount * 4));
+
     private ScanResultDto ScanWithTimeout(string path, long fileSizeBytes)
     {
         var timeout = GetTimeoutForFileSize(fileSizeBytes);
+        bool acquiredLimiter = _scanWorkerLimiter.Wait(TimeSpan.FromSeconds(5));
+        if (!acquiredLimiter)
+        {
+            _logger.LogWarning(
+                "Gioi han so tac vu quet dong thoi (timeout-wrapper) da day sau 5s cho — ThreadPool co the dang chiu ap luc do nhieu file bi timeout/treo gan day (file hien tai: {Path}); van tiep tuc quet, khong chan", path);
+        }
+
         Task<ScanResultDto> scanTask;
         try
         {
@@ -379,10 +453,21 @@ public sealed class FullScanService
         }
         catch (Exception ex)
         {
+            if (acquiredLimiter) _scanWorkerLimiter.Release();
             // Tien to [MA_LOI] thong nhat voi cach engine C++ phan loai loi
             // (xem pipeline.cpp CopyClassifiedIoError) — de UI gom nhom
             // duoc theo loai thay vi phai doc tung dong van ban rieng le.
             return new ScanResultDto { Verdict = ScanVerdict.ScanError, Stage = DetectionStage.IoError, Reason = "[EXCEPTION] Ngoai le khi quet: " + ex.Message };
+        }
+
+        if (acquiredLimiter)
+        {
+            // Giai phong slot NGAY KHI tac vu ben trong thuc su hoan tat — co
+            // the la ngay lap tuc (quet nhanh), hoac rat lau SAU KHI ham nay
+            // da tra ve vi timeout ben duoi (tac vu bi "mo coi"). Dam bao
+            // slot chi bi chiem dung khoang thoi gian tac vu THAT SU con
+            // chay tren ThreadPool.
+            scanTask.ContinueWith(_ => _scanWorkerLimiter.Release(), TaskScheduler.Default);
         }
 
         if (scanTask.Wait(timeout))
@@ -660,8 +745,8 @@ public sealed class FullScanService
     {
         const int bufferSize = 65536;
         long count = 0;
-        IntPtr inBuffer = System.Runtime.InteropServices.Marshal.AllocHGlobal(24);
-        IntPtr outBuffer = System.Runtime.InteropServices.Marshal.AllocHGlobal(bufferSize);
+        IntPtr inBuffer = Marshal.AllocHGlobal(24);
+        IntPtr outBuffer = Marshal.AllocHGlobal(bufferSize);
         try
         {
             var mftEnum = new NativeInterop.MFT_ENUM_DATA_V0
@@ -670,7 +755,7 @@ public sealed class FullScanService
                 LowUsn = 0,
                 HighUsn = long.MaxValue,
             };
-            System.Runtime.InteropServices.Marshal.StructureToPtr(mftEnum, inBuffer, false);
+            Marshal.StructureToPtr(mftEnum, inBuffer, false);
 
             for (int iter = 0; iter < maxIterations; iter++)
             {
@@ -678,11 +763,22 @@ public sealed class FullScanService
                     inBuffer, 24, outBuffer, bufferSize, out uint bytesReturned, IntPtr.Zero);
                 if (!ok || bytesReturned <= 8) break;
 
-                ulong nextStart = (ulong)System.Runtime.InteropServices.Marshal.ReadInt64(outBuffer, 0);
+                ulong nextStart = (ulong)Marshal.ReadInt64(outBuffer, 0);
                 int offset = 8;
-                while (offset < bytesReturned)
+                // [SUA LOI NGHIEM TRONG] TRUOC DAY dieu kien vong lap chi la
+                // "offset < bytesReturned" — khong dam bao con DU 4 byte de
+                // Marshal.ReadInt32 doc an toan. Neu ban ghi CUOI CUNG trong
+                // buffer ket thuc dung luc offset con lai 1-3 byte (vi du
+                // bytesReturned == bufferSize va offset == bufferSize-2),
+                // ReadInt32 se doc VUOT QUA bien buffer da cap phat
+                // (AllocHGlobal(bufferSize)) — doc bo nho khong thuoc ve
+                // minh (OOB read), co the crash tien trinh service (chay
+                // quyen SYSTEM) hoac doc du lieu rac tuy vao layout heap.
+                // Sua: chi tiep tuc vong lap khi con DU offset+4 byte NAM
+                // TRONG PHAM VI bytesReturned da nhan duoc.
+                while (offset + 4 <= bytesReturned)
                 {
-                    int recordLength = System.Runtime.InteropServices.Marshal.ReadInt32(outBuffer, offset);
+                    int recordLength = Marshal.ReadInt32(outBuffer, offset);
                     if (recordLength <= 0) break;
                     count++;
                     offset += recordLength;
@@ -694,13 +790,13 @@ public sealed class FullScanService
                     LowUsn = 0,
                     HighUsn = long.MaxValue,
                 };
-                System.Runtime.InteropServices.Marshal.StructureToPtr(nextEnum, inBuffer, false);
+                Marshal.StructureToPtr(nextEnum, inBuffer, false);
             }
         }
         finally
         {
-            System.Runtime.InteropServices.Marshal.FreeHGlobal(inBuffer);
-            System.Runtime.InteropServices.Marshal.FreeHGlobal(outBuffer);
+            Marshal.FreeHGlobal(inBuffer);
+            Marshal.FreeHGlobal(outBuffer);
         }
         return count;
     }
@@ -721,23 +817,23 @@ public sealed class FullScanService
                 PropertyId = NativeInterop.StorageDeviceSeekPenaltyProperty,
                 QueryType = NativeInterop.PropertyStandardQuery,
             };
-            int querySize = System.Runtime.InteropServices.Marshal.SizeOf<NativeInterop.STORAGE_PROPERTY_QUERY>();
-            int descSize = System.Runtime.InteropServices.Marshal.SizeOf<NativeInterop.DEVICE_SEEK_PENALTY_DESCRIPTOR>();
-            IntPtr inPtr = System.Runtime.InteropServices.Marshal.AllocHGlobal(querySize);
-            IntPtr outPtr = System.Runtime.InteropServices.Marshal.AllocHGlobal(descSize);
+            int querySize = Marshal.SizeOf<NativeInterop.STORAGE_PROPERTY_QUERY>();
+            int descSize = Marshal.SizeOf<NativeInterop.DEVICE_SEEK_PENALTY_DESCRIPTOR>();
+            IntPtr inPtr = Marshal.AllocHGlobal(querySize);
+            IntPtr outPtr = Marshal.AllocHGlobal(descSize);
             try
             {
-                System.Runtime.InteropServices.Marshal.StructureToPtr(query, inPtr, false);
+                Marshal.StructureToPtr(query, inPtr, false);
                 bool ok = NativeInterop.DeviceIoControl(handle, NativeInterop.IOCTL_STORAGE_QUERY_PROPERTY,
                     inPtr, (uint)querySize, outPtr, (uint)descSize, out _, IntPtr.Zero);
                 if (!ok) return false;
-                var desc = System.Runtime.InteropServices.Marshal.PtrToStructure<NativeInterop.DEVICE_SEEK_PENALTY_DESCRIPTOR>(outPtr);
+                var desc = Marshal.PtrToStructure<NativeInterop.DEVICE_SEEK_PENALTY_DESCRIPTOR>(outPtr);
                 return desc.IncursSeekPenalty;
             }
             finally
             {
-                System.Runtime.InteropServices.Marshal.FreeHGlobal(inPtr);
-                System.Runtime.InteropServices.Marshal.FreeHGlobal(outPtr);
+                Marshal.FreeHGlobal(inPtr);
+                Marshal.FreeHGlobal(outPtr);
             }
         }
         finally
@@ -748,7 +844,7 @@ public sealed class FullScanService
 
     private static uint GetIdleMs()
     {
-        var lii = new NativeInterop.LASTINPUTINFO { cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf<NativeInterop.LASTINPUTINFO>() };
+        var lii = new NativeInterop.LASTINPUTINFO { cbSize = (uint)Marshal.SizeOf<NativeInterop.LASTINPUTINFO>() };
         if (!NativeInterop.GetLastInputInfo(ref lii)) return uint.MaxValue; // khong lay duoc -> coi nhu idle, khong chan scan
         return NativeInterop.GetTickCount() - lii.dwTime;
     }
