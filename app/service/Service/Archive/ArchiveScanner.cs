@@ -85,6 +85,16 @@ public sealed class ArchiveScanner
 
         using var archive = ZipFile.OpenRead(zipPath);
         int entryCount = 0;
+        // [SUA LOI] TRUOC DAY neu MOT entry tra ve verdict ScanError (vi du
+        // engine loi khi quet buffer cua rieng entry do), gia tri nay bi
+        // "nuot" hoan toan — vong lap van tiep tuc nhu khong co gi xay ra, va
+        // neu KHONG entry nao khac la Malicious/Suspicious, ham van tra ve
+        // Clean o cuoi cho CA FILE ZIP du mot phan noi dung CHUA THUC SU
+        // duoc quet thanh cong (loi, khong phai da xac nhan sach). Sua: nho
+        // lai ScanError DAU TIEN gap phai va tra ve no thay vi Clean o cuoi
+        // ham, TRU KHI mot entry sau do la Malicious/Suspicious (van uu tien
+        // verdict nghiem trong hon, return ngay nhu truoc).
+        ScanResultDto? pendingEntryError = null;
         foreach (var entry in archive.Entries)
         {
             entryCount++;
@@ -126,7 +136,7 @@ public sealed class ArchiveScanner
                 {
                     return ZipBombVerdict("FLAG_SUSPICIOUS_ZIPBOMB",
                         $"Vuot tran dung luong giai nen tuyet doi ({MaxTotalDecompressedBytes / (1024 * 1024)}MB) — " +
-                        $"phat hien TRONG LUC giai nen thuc te tai entry {entry.FullName}, khong dua vao metadata header");
+                        $"phat hien TRONG LUC giai nen thuc te tai entry {SanitizeForLog(entry.FullName)}, khong dua vao metadata header");
                 }
 
                 ms.Write(buffer, 0, read);
@@ -136,11 +146,21 @@ public sealed class ArchiveScanner
             // thay vi entry.Length tu header.
             if (entryBytesRead > 0 && entry.CompressedLength > 0)
             {
-                long ratio = entryBytesRead / Math.Max(1, entry.CompressedLength);
-                if (ratio > MaxCompressionRatio)
+                // [SUA LOI] TRUOC DAY so sanh dua vao PHEP CHIA SO NGUYEN
+                // (entryBytesRead / CompressedLength) — phep chia nay LAM
+                // TRON XUONG, vi du ty le THAT SU la 100.99x bi cat con 100,
+                // KHONG > MaxCompressionRatio (100) nen KHONG bi gan co, du
+                // day la mot ty le nen zip-bomb ro rang (dung ngay tai
+                // nguong). Sua: so sanh bang PHEP NHAN
+                // (entryBytesRead > CompressedLength * MaxCompressionRatio)
+                // de tranh hoan toan sai so lam tron; gia tri chia nguyen chi
+                // dung de HIEN THI trong thong diep, khong dung de QUYET
+                // DINH co flag hay khong.
+                if (entryBytesRead > entry.CompressedLength * MaxCompressionRatio)
                 {
+                    long ratio = entryBytesRead / entry.CompressedLength;
                     return ZipBombVerdict("FLAG_SUSPICIOUS_ZIPBOMB",
-                        $"Ty le nen {ratio}x vuot nguong toi da ({MaxCompressionRatio}x) — entry {entry.FullName}");
+                        $"Ty le nen {ratio}x (~{(double)entryBytesRead / entry.CompressedLength:0.##}x) vuot nguong toi da ({MaxCompressionRatio}x) — entry {SanitizeForLog(entry.FullName)}");
                 }
             }
 
@@ -165,11 +185,25 @@ public sealed class ArchiveScanner
                 {
                     return entryResult;
                 }
+                if (entryResult.Verdict == ScanVerdict.ScanError)
+                {
+                    pendingEntryError ??= entryResult;
+                }
             }
         }
 
-        return new ScanResultDto { Verdict = ScanVerdict.Clean, Stage = DetectionStage.None, Reason = "File nen sach qua kiem tra zip-bomb va quet noi dung" };
+        return pendingEntryError
+            ?? new ScanResultDto { Verdict = ScanVerdict.Clean, Stage = DetectionStage.None, Reason = "File nen sach qua kiem tra zip-bomb va quet noi dung" };
     }
+
+    // [SUA LOI, nhe] entry.FullName trong file zip do NGUOI TAO ZIP tu khai
+    // bao (khong kiem soat duoc), co the chua ky tu xuong dong (CR/LF) — neu
+    // nhet thang vao Reason roi Reason do sau nay duoc ghi ra MOT sink log
+    // dang van ban thuan (khong tu dong escape nhu JSON), ky tu xuong dong
+    // trong ten entry co the "chen" them dong log gia mao, danh lua nguoi
+    // doc log. Loai bo CR/LF truoc khi dua vao bat ky thong diep nao co the
+    // toi tay mot sink dang van ban.
+    private static string SanitizeForLog(string value) => value.Replace("\r", "").Replace("\n", " ");
 
     private static ScanResultDto ZipBombVerdict(string flag, string reason) => new()
     {
