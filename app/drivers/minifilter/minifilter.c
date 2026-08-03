@@ -243,9 +243,19 @@ SmePlanAvMfPreCreateCallback(
     // truoc (khoa: duong dan + mtime + kich thuoc, xem NFR-PERF-01) truoc
     // khi hoi service — bo qua trong ban tham chieu nay de giu vi du gon.
 
+    // [SUA LOI NGHIEM TRONG] Truoc day chi RtlZeroMemory rieng query.FilePath
+    // — cac truong khac (Type, ProcessId) duoc gan tung truong nhung KHONG
+    // xoa PHAN DEM (padding) ma trinh bien dich chen giua cac truong (vi
+    // du giua Type 4-byte va ProcessId can align 8-byte tren x64) de dam
+    // bao alignment. query la bien local tren stack, phan dem do giu
+    // nguyen RAC RUOI con lai tu ngan xep (co the la du lieu cua ham goi
+    // truoc, ke ca dia chi con tro/gia tri nhay cam khac). Toan bo struct
+    // (sizeof(DRIVER_TO_SERVICE_MSG)) duoc FltSendMessage sao chep NGUYEN
+    // VEN sang service — nghia la nhung byte rac do bi RO RI qua ranh gioi
+    // kernel/user-mode. Sua: xoa TOAN BO struct truoc khi gan tung truong.
+    RtlZeroMemory(&query, sizeof(query));
     query.Type = MsgType_FileOpenQuery;
     query.ProcessId = PsGetCurrentProcessId();
-    RtlZeroMemory(query.FilePath, sizeof(query.FilePath));
     RtlCopyMemory(
         query.FilePath, nameInfo->Name.Buffer,
         min(nameInfo->Name.Length, sizeof(query.FilePath) - sizeof(WCHAR)));
@@ -291,8 +301,22 @@ SmePlanAvMfPostCreateCallback(
     PMINIFILTER_STREAM_CONTEXT streamContext = NULL;
     NTSTATUS status;
 
-    UNREFERENCED_PARAMETER(CompletionContext);
     UNREFERENCED_PARAMETER(Flags);
+
+    // [HAN CHE MOI TRUONG — co hoi toi uu CHUA lam trong ban nay] CompletionContext
+    // nhan tu SmePlanAvMfPreCreateCallback (tham so thu 3) hien KHONG duoc dung
+    // (UNREFERENCED_PARAMETER ben duoi): FltGetFileNameInformation goi lai
+    // o day la lan THU HAI cho CUNG mot IRP_MJ_CREATE (lan dau da goi trong
+    // SmePlanAvMfPreCreateCallback). Ve nguyen tac co the giu lai mot tham chieu
+    // FLT_FILE_NAME_INFORMATION tu Pre va truyen qua CompletionContext de
+    // tranh goi FltGetFileNameInformation lan hai — nhung lam dung can quan
+    // ly vong doi tham chieu (FltReferenceFileNameInformation/Release) cho
+    // CA HAI nhanh cua SmePlanAvMfPreCreateCallback (executable va non-executable,
+    // ca hai deu tra WITH_CALLBACK) va xu ly dung khi Post bi goi voi
+    // Data->IoStatus.Status loi (file khong mo duoc du Pre da tra allow) —
+    // du rui ro de KHONG sua "mu" trong phien khong co trinh bien dich nay;
+    // ghi chu lai de nguoi sau can nhac.
+    UNREFERENCED_PARAMETER(CompletionContext);
 
     // Chi cache cho create THANH CONG tren MOT FILE OBJECT that (bo qua
     // loi, va thu muc — thu muc khong bao gio la muc tieu cua IRP_MJ_WRITE
@@ -319,7 +343,8 @@ SmePlanAvMfPostCreateCallback(
         FltObjects->Filter, FLT_STREAM_CONTEXT, sizeof(MINIFILTER_STREAM_CONTEXT),
         NonPagedPoolNx, (PFLT_CONTEXT*)&streamContext);
     if (NT_SUCCESS(status)) {
-        streamContext->SmePlanAvMfIsUnderProtectedFolder = SmePlanAvMfIsUnderProtectedFolder(&nameInfo->Name);
+        streamContext->SmePlanAvMfIsUnderProtectedFolder = SmePlanAvMfIsUnderProtectedFolder(
+            &nameInfo->Name, &streamContext->CachedProtectedFoldersGeneration);
 
         // FLT_SET_CONTEXT_KEEP_IF_EXISTS: neu mot thread khac da gan context
         // cho CUNG stream nay truoc (race hiem gap), giu ban da co, khong
@@ -358,9 +383,12 @@ SmePlanAvMfProcessNotifyCallbackEx(
         return;
     }
 
+    // [SUA LOI NGHIEM TRONG] Xoa TOAN BO struct (khong chi FilePath) truoc
+    // khi gan tung truong — xem ghi chu chi tiet o SmePlanAvMfPreCreateCallback,
+    // cung mot loi ro ri byte dem (padding) chua khoi tao qua FltSendMessage.
+    RtlZeroMemory(&query, sizeof(query));
     query.Type = MsgType_ProcessCreateQuery;
     query.ProcessId = ProcessId;
-    RtlZeroMemory(query.FilePath, sizeof(query.FilePath));
     RtlCopyMemory(
         query.FilePath, CreateInfo->ImageFileName->Buffer,
         min(CreateInfo->ImageFileName->Length, sizeof(query.FilePath) - sizeof(WCHAR)));
@@ -443,28 +471,102 @@ SmePlanAvMfMessageNotifyCallback(
 
     count = min(msg->FolderCount, MINIFILTER_MAX_PROTECTED_FOLDERS);
 
+    // [SUA LOI NGHIEM TRONG] msg->Folders la mang WCHAR co dinh
+    // (MINIFILTER_MAX_FOLDER_PATH_CHARS moi phan tu) NHAN THANG tu service
+    // qua FilterSendMessage — cung LOAI rui ro da sua o wfp_callout.c
+    // SmePlanAvFwDeviceControl (IOCTL_SMEPLANAV_FW_PUSH_RULE): neu mot
+    // phan tu KHONG co NUL trong pham vi MINIFILTER_MAX_FOLDER_PATH_CHARS
+    // (vi du service co loi marshalling, hoac du lieu bi hong), ham
+    // RtlInitUnicodeString goi trong SmePlanAvMfIsUnderProtectedFolder se QUET
+    // KHONG GIOI HAN tim NUL (khac RtlStringCchCopyNW da dung o cho khac,
+    // RtlInitUnicodeString khong nhan tham so gioi han) — voi phan tu CUOI
+    // CUNG trong mang ProtectedFolders, quet nay se DOC VUOT QUA het mang
+    // vao vung nho kernel ke tiep (ProtectedFoldersLock roi xa hon), co the
+    // gay BSOD. Sua: kiem tra NUL-terminator TRONG BIEN mang cho TUNG phan
+    // tu se duoc copy, ngay tai choke point nhan thong diep nay, truoc khi
+    // dua vao gContext — tu choi toan bo push neu bat ky phan tu nao thieu
+    // NUL hop le.
+    {
+        ULONG folderIdx, nulCheckIdx;
+        BOOLEAN allHaveNul = TRUE;
+        for (folderIdx = 0; folderIdx < count && allHaveNul; folderIdx++) {
+            BOOLEAN hasNul = FALSE;
+            for (nulCheckIdx = 0; nulCheckIdx < MINIFILTER_MAX_FOLDER_PATH_CHARS; nulCheckIdx++) {
+                if (msg->Folders[folderIdx][nulCheckIdx] == L'\0') {
+                    hasNul = TRUE;
+                    break;
+                }
+            }
+            if (!hasNul) {
+                allHaveNul = FALSE;
+            }
+        }
+        if (!allHaveNul) {
+            return STATUS_INVALID_PARAMETER;
+        }
+    }
+
     KeAcquireSpinLock(&gContext.ProtectedFoldersLock, &oldIrql);
     gContext.ProtectedFolderCount = count;
     RtlCopyMemory(gContext.ProtectedFolders, msg->Folders, count * sizeof(msg->Folders[0]));
+    // [SUA LOI NGHIEM TRONG] Tang generation MOI LAN danh sach doi de cac
+    // MINIFILTER_STREAM_CONTEXT da cache tu TRUOC lan cap nhat nay tu nhan
+    // ra minh STALE (xem MINIFILTER_CONTEXT.ProtectedFoldersGeneration va
+    // SmePlanAvMfQueryProtectedFolderWrite) — sua loi "cache khong bao gio duoc
+    // lam moi lai sau khi danh sach bao ve thay doi" (file mo TRUOC khi
+    // admin them thu muc cua no vao danh sach se khong bao gio duoc bao ve
+    // cho toi khi dong/mo lai file, neu khong co co che nay).
+    InterlockedIncrement(&gContext.ProtectedFoldersGeneration);
     KeReleaseSpinLock(&gContext.ProtectedFoldersLock, oldIrql);
 
     return STATUS_SUCCESS;
 }
 
 BOOLEAN
-SmePlanAvMfIsUnderProtectedFolder(_In_ PCUNICODE_STRING FileName)
+SmePlanAvMfIsUnderProtectedFolder(_In_ PCUNICODE_STRING FileName, _Out_opt_ PLONG OutGeneration)
 {
     KIRQL oldIrql;
     ULONG i;
     BOOLEAN match = FALSE;
 
     KeAcquireSpinLock(&gContext.ProtectedFoldersLock, &oldIrql);
+
+    // [SUA LOI NGHIEM TRONG] Doc ProtectedFoldersGeneration CUNG mot lan
+    // khoa spinlock voi viec quet danh sach ben duoi, de gia tri tra ve la
+    // ban chup DONG BO voi ket qua match — neu doc generation RIENG (ngoai
+    // khoa), co the xay ra race: danh sach doi giua luc tinh match va luc
+    // doc generation, khien caller (SmePlanAvMfPostCreateCallback) cache mot cap
+    // (match, generation) khong khop nhau.
+    if (OutGeneration != NULL) {
+        *OutGeneration = gContext.ProtectedFoldersGeneration;
+    }
+
     for (i = 0; i < gContext.ProtectedFolderCount; i++) {
         UNICODE_STRING folder;
         USHORT folderLen;
 
         RtlInitUnicodeString(&folder, gContext.ProtectedFolders[i]);
         folderLen = folder.Length;
+
+        // [SUA LOI NGHIEM TRONG] Truoc day khong kiem tra folderLen == 0:
+        // mot phan tu ProtectedFolders[i] rong (vi du slot con lai tu cau
+        // hinh loi, hoac chuoi rong duoc push nham) co Length == 0 sau
+        // RtlInitUnicodeString. Voi folderLen == 0: dieu kien "FileName->Length
+        // < folderLen" khong bao gio dung (khong the < 0), va RtlEqualUnicodeString
+        // giua hai chuoi RONG luon tra ve TRUE, nen nhanh kiem tra ranh gioi
+        // ben duoi roi vao "FileName->Buffer[0] == L'\\'" — DUNG cho HAU
+        // HET moi file (ten file kernel-mode luon bat dau bang '\'), tuc la
+        // MOT phan tu rong se khien SmePlanAvMfIsUnderProtectedFolder tra ve TRUE cho
+        // GAN NHU MOI file tren he thong, bien tinh nang toi uu "chi hoi
+        // service khi thuc su nam trong thu muc bao ve" thanh vo nghia
+        // (moi thao tac ghi tren toan he thong deu bi xem la "trong thu
+        // muc bao ve" va phai cho hoi service dong bo, co nguy co treo I/O
+        // toan he thong neu mot cau hinh loi day xuong mot entry rong). Sua:
+        // bo qua (continue) cac phan tu rong ngay tu dau, khong coi la khop.
+        if (folderLen == 0) {
+            continue;
+        }
+
         // Bo QUA MOT dau '\' cuoi cung neu co (service co the gui duong
         // dan da co san hoac chua co dau phan cach cuoi) — chuan hoa ve
         // cung mot dang truoc khi so sanh boundary ben duoi.
@@ -472,6 +574,8 @@ SmePlanAvMfIsUnderProtectedFolder(_In_ PCUNICODE_STRING FileName)
             folder.Buffer[(folderLen / sizeof(WCHAR)) - 1] == L'\\') {
             folderLen = (USHORT)(folderLen - sizeof(WCHAR));
         }
+
+        if (folderLen == 0) continue; // toan bo entry chi la "\" sau khi bo dau phan cach -> bo qua, khong khop moi thu
 
         if (FileName->Length < folderLen) continue;
 
@@ -512,6 +616,18 @@ SmePlanAvMfIsUnderProtectedFolder(_In_ PCUNICODE_STRING FileName)
     return match;
 }
 
+// [SUA LOI NGHIEM TRONG] Doc ProtectedFoldersGeneration hien tai KHONG can
+// giu spinlock toan bo (chi de kiem tra cache stream context con moi hay
+// khong tren hot path IRP_MJ_WRITE — xem SmePlanAvMfQueryProtectedFolderWrite):
+// dung InterlockedCompareExchange(...,0,0) de doc nguyen tu (co rao chan
+// bo nho), tranh chi phi khoa spinlock day du (dieu se xoa bot loi ich cua
+// co che cache stream context ma toi uu hieu nang o day dang bao ve).
+static LONG
+SmePlanAvMfGetProtectedFoldersGeneration(VOID)
+{
+    return InterlockedCompareExchange(&gContext.ProtectedFoldersGeneration, 0, 0);
+}
+
 // [QUYET DINH TRIEN KHAI CHUNG cho SmePlanAvMfPreWriteCallback + SmePlanAvMfPreSetInformationCallback]
 // Ca hai deu dung MOT ham dung chung SmePlanAvMfQueryProtectedFolderWrite (khai bao
 // tinh, khong dua vao .h vi chi dung noi bo file nay) de tranh trung lap
@@ -541,18 +657,50 @@ SmePlanAvMfQueryProtectedFolderWrite(_Inout_ PFLT_CALLBACK_DATA Data, _In_ PCFLT
     status = FltGetStreamContext(FltObjects->Instance, FltObjects->FileObject, (PFLT_CONTEXT*)&streamContext);
     if (NT_SUCCESS(status) && streamContext != NULL) {
         BOOLEAN cachedUnderProtected = streamContext->SmePlanAvMfIsUnderProtectedFolder;
+        LONG cachedGeneration = streamContext->CachedProtectedFoldersGeneration;
         FltReleaseContext(streamContext);
 
-        if (!cachedUnderProtected) {
-            return FLT_PREOP_SUCCESS_NO_CALLBACK; // duong nhanh: khong can resolve ten file
+        // [SUA LOI NGHIEM TRONG] Truoc day: cache "khong nam trong thu muc
+        // bao ve" duoc tin TUYET DOI cho toi khi file dong, du danh sach
+        // thu muc bao ve co the da duoc ADMIN CAP NHAT (them thu muc moi)
+        // SAU thoi diem file nay duoc mo — bo NGO su khac biet do, khien
+        // mot file dang mo tu TRUOC luc them thu muc bao ve khong bao gio
+        // duoc kiem tra lai cho toi khi dong/mo lai handle (co the la VO
+        // THOI HAN neu ung dung giu handle mo lien tuc, vi du mot editor).
+        // Sua: so sanh CachedProtectedFoldersGeneration voi generation HIEN
+        // TAI — chi tin cache khi danh sach CHUA doi ke tu luc cache; neu
+        // da doi (hoac cache bao CO trong thu muc bao ve), tinh/hoi lai.
+        if (!cachedUnderProtected && cachedGeneration == SmePlanAvMfGetProtectedFoldersGeneration()) {
+            return FLT_PREOP_SUCCESS_NO_CALLBACK; // duong nhanh: cache con moi, khong can resolve ten file
         }
 
-        status = FltGetFileNameInformation(
-            Data, FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_DEFAULT, &nameInfo);
-        if (!NT_SUCCESS(status)) {
-            return FLT_PREOP_SUCCESS_NO_CALLBACK;
+        if (cachedUnderProtected) {
+            // Cache (du co the stale ve mat generation) da tung bao CO
+            // trong thu muc bao ve — giu nguyen hanh vi cu: luon hoi service,
+            // uu tien an toan hon la bo sot (neu thu muc da bi go bao ve,
+            // service se la noi quyet dinh allow, khong phai driver).
+            status = FltGetFileNameInformation(
+                Data, FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_DEFAULT, &nameInfo);
+            if (!NT_SUCCESS(status)) {
+                return FLT_PREOP_SUCCESS_NO_CALLBACK;
+            }
+            FltParseFileNameInformation(nameInfo);
+        } else {
+            // cachedUnderProtected == FALSE nhung generation stale — danh
+            // sach thu muc bao ve co the da doi, khong the tin cache nua,
+            // phai tinh lai tu dau (giong nhanh fallback ben duoi).
+            status = FltGetFileNameInformation(
+                Data, FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_DEFAULT, &nameInfo);
+            if (!NT_SUCCESS(status)) {
+                return FLT_PREOP_SUCCESS_NO_CALLBACK;
+            }
+            FltParseFileNameInformation(nameInfo);
+
+            if (!SmePlanAvMfIsUnderProtectedFolder(&nameInfo->Name, NULL)) {
+                FltReleaseFileNameInformation(nameInfo);
+                return FLT_PREOP_SUCCESS_NO_CALLBACK;
+            }
         }
-        FltParseFileNameInformation(nameInfo);
     } else {
         // Fallback: khong co cache (vi du file mo truoc khi filter attach,
         // hoac SmePlanAvMfPostCreateCallback truoc do khong cap phat duoc context) —
@@ -564,15 +712,18 @@ SmePlanAvMfQueryProtectedFolderWrite(_Inout_ PFLT_CALLBACK_DATA Data, _In_ PCFLT
         }
         FltParseFileNameInformation(nameInfo);
 
-        if (!SmePlanAvMfIsUnderProtectedFolder(&nameInfo->Name)) {
+        if (!SmePlanAvMfIsUnderProtectedFolder(&nameInfo->Name, NULL)) {
             FltReleaseFileNameInformation(nameInfo);
             return FLT_PREOP_SUCCESS_NO_CALLBACK;
         }
     }
 
+    // [SUA LOI NGHIEM TRONG] Xoa TOAN BO struct truoc khi gan tung truong —
+    // xem ghi chu chi tiet o SmePlanAvMfPreCreateCallback (ro ri byte dem chua
+    // khoi tao qua FltSendMessage).
+    RtlZeroMemory(&query, sizeof(query));
     query.Type = MsgType_ProtectedWriteQuery;
     query.ProcessId = PsGetCurrentProcessId();
-    RtlZeroMemory(query.FilePath, sizeof(query.FilePath));
     RtlCopyMemory(
         query.FilePath, nameInfo->Name.Buffer,
         min(nameInfo->Name.Length, sizeof(query.FilePath) - sizeof(WCHAR)));

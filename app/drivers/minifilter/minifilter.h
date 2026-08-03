@@ -45,6 +45,17 @@ typedef struct _MINIFILTER_CONTEXT {
     ULONG ProtectedFolderCount;
     WCHAR ProtectedFolders[MINIFILTER_MAX_PROTECTED_FOLDERS][MINIFILTER_MAX_FOLDER_PATH_CHARS];
     KSPIN_LOCK ProtectedFoldersLock;
+    // [SUA LOI NGHIEM TRONG] Dem so lan danh sach thu muc bao ve duoc PUSH
+    // cap nhat (tang trong SmePlanAvMfMessageNotifyCallback). MINIFILTER_STREAM_CONTEXT
+    // luu lai gia tri nay tai thoi diem cache — neu gia tri hien tai khac
+    // gia tri da cache, ket qua SmePlanAvMfIsUnderProtectedFolder cached KHONG con
+    // dang tin (danh sach da doi SAU khi file mo) va phai tinh lai — xem
+    // SmePlanAvMfQueryProtectedFolderWrite. Khong dung nay truoc day: mot file mo
+    // TRUOC khi admin them thu muc cua no vao danh sach bao ve se giu cache
+    // "khong bao ve" SUOT VONG DOI handle, khong bao gio duoc kiem tra lai
+    // cho toi khi dong/mo lai file — lam mat tac dung bao ve ngay lap tuc
+    // ma tinh nang push-cap-nhat du dinh mang lai.
+    volatile LONG ProtectedFoldersGeneration;
 } MINIFILTER_CONTEXT, *PMINIFILTER_CONTEXT;
 
 // [SUA LOI HIEU NANG — can xac nhan khi build that voi WDK] Context gan
@@ -63,6 +74,11 @@ typedef struct _MINIFILTER_CONTEXT {
 // hiem gap do.
 typedef struct _MINIFILTER_STREAM_CONTEXT {
     BOOLEAN SmePlanAvMfIsUnderProtectedFolder;
+    // [SUA LOI NGHIEM TRONG] Ban chup ProtectedFoldersGeneration (xem
+    // MINIFILTER_CONTEXT) tai thoi diem tinh SmePlanAvMfIsUnderProtectedFolder o tren —
+    // dung de phat hien cache STALE khi danh sach thu muc bao ve duoc cap
+    // nhat SAU khi file nay da mo (xem SmePlanAvMfQueryProtectedFolderWrite).
+    LONG CachedProtectedFoldersGeneration;
 } MINIFILTER_STREAM_CONTEXT, *PMINIFILTER_STREAM_CONTEXT;
 
 #define MINIFILTER_STREAM_CONTEXT_TAG 'CsAS' // "SAsC" (SmePlanAv Stream Context)
@@ -101,7 +117,15 @@ typedef struct _PUSH_SET_PROTECTED_FOLDERS_MSG {
 typedef struct _DRIVER_TO_SERVICE_MSG {
     MSG_TYPE Type;
     HANDLE ProcessId;
-    WCHAR FilePath[260];
+    // [SUA LOI NGHIEM TRONG] Truoc day hardcode lai "260" thay vi dung
+    // MINIFILTER_MAX_FOLDER_PATH_CHARS da dinh nghia ngay tren (dong 38,
+    // CUNG file nay) — hai hang so dung de chua duong dan Windows nhung
+    // duoc go tay doc lap, de lech nhau neu chi sua mot noi. Dung chung
+    // mot hang so trong pham vi file nay (finding: hang so 260 lap lai o
+    // nhieu noi — xem them SMEPLANAV_FW_MAX_PATH_CHARS trong
+    // wfp_callout.h, mot driver .sys KHAC nen KHONG the dung chung header
+    // voi file nay, chi ghi chu de nguoi sau biet co ban tuong duong).
+    WCHAR FilePath[MINIFILTER_MAX_FOLDER_PATH_CHARS];
 } DRIVER_TO_SERVICE_MSG, *PDRIVER_TO_SERVICE_MSG;
 
 typedef struct _SERVICE_TO_DRIVER_REPLY {
@@ -153,8 +177,11 @@ NTSTATUS SmePlanAvMfQueryServiceDecision(
     _Out_ PSERVICE_TO_DRIVER_REPLY Reply);
 
 // EXT-RW-01: tra ve TRUE neu FileName nam trong mot thu muc bao ve
-// (so sanh prefix don gian, khong phan biet hoa/thuong).
-BOOLEAN SmePlanAvMfIsUnderProtectedFolder(_In_ PCUNICODE_STRING FileName);
+// (so sanh prefix don gian, khong phan biet hoa/thuong). OutGeneration
+// (co the NULL neu khong can): nhan gia tri ProtectedFoldersGeneration tai
+// thoi diem quet (doc cung mot lan khoa spinlock voi danh sach thu muc),
+// dung de phat hien cache stale sau nay — xem MINIFILTER_STREAM_CONTEXT.
+BOOLEAN SmePlanAvMfIsUnderProtectedFolder(_In_ PCUNICODE_STRING FileName, _Out_opt_ PLONG OutGeneration);
 
 FLT_PREOP_CALLBACK_STATUS SmePlanAvMfPreWriteCallback(
     _Inout_ PFLT_CALLBACK_DATA Data,
