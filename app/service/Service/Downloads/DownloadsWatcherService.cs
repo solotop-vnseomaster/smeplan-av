@@ -82,7 +82,20 @@ public sealed class DownloadsWatcherService : BackgroundService
         }
 
         // Buoc 3: xac nhan file da ghi xong bang polling CreateFile exclusive.
-        if (!WaitUntilFileReady(path, TimeSpan.FromMilliseconds(200), TimeSpan.FromSeconds(30), ct))
+        // [PARTIALLY-FIXED — xem ghi chu tai WaitUntilFileReady va sau
+        // ScanFile ben duoi] Van CON mot khoang ho TOCTOU giua luc dong
+        // handle doc-doc-quyen o day va luc _engine.ScanFile mo lai file
+        // BANG DUONG DAN ben duoi — ScanEngineService.ScanFile(string) chi
+        // nhan mot duong dan (engine native tu mo file rieng), KHONG co
+        // overload nhan stream/handle da mo san, nen KHONG THE quet xuyen
+        // qua handle dang giu ma khong sua doi engine C++ (ngoai pham vi
+        // file nay). Giai phap ap dung: thu hep toi da cua so (khong them
+        // buoc nao giua dong handle va goi ScanFile) VA them mot buoc kiem
+        // tra toan ven SAU KHI scan xong (size/mtime khong doi) de PHAT HIEN
+        // (khong ngan chan hoan toan) ky thuat "scan-then-swap": neu file bi
+        // doi trong luc quet, KHONG tin ket qua Clean, coi la ScanError va
+        // ghi canh bao ro rang thay vi am tham bao Clean sai.
+        if (!WaitUntilFileReady(path, TimeSpan.FromMilliseconds(200), TimeSpan.FromSeconds(30), ct, out var preScanSize, out var preScanWriteUtc))
         {
             _logger.LogWarning("File {Path} van bi khoa sau 30s polling (ERROR_SHARING_VIOLATION) — bo qua", path);
             return;
@@ -93,6 +106,28 @@ public sealed class DownloadsWatcherService : BackgroundService
         // rui ro" nhu real-time protection thong thuong.
         var result = _engine.ScanFile(path);
 
+        // [PARTIALLY-FIXED] Kiem tra toan ven SAU scan — neu kich thuoc/mtime
+        // da doi so voi luc xac nhan file san sang (truoc khi mo lai de
+        // quet), rat co the noi dung da bi thay the GIUA hai buoc do (cua so
+        // TOCTOU con lai, khong the dong hoan toan neu khong sua engine).
+        // Khong tin verdict Clean/Suspicious trong truong hop nay — ep ve
+        // ScanError va canh bao ro de nguoi van hanh biet co nghi van bi
+        // "scan-then-swap", thay vi am tham chap nhan ket qua co the sai.
+        if (TryGetFileSignature(path, out var postScanSize, out var postScanWriteUtc) &&
+            (postScanSize != preScanSize || postScanWriteUtc != preScanWriteUtc) &&
+            result.Verdict != ScanVerdict.Malicious)
+        {
+            _logger.LogWarning(
+                "File {Path} da THAY DOI trong luc quet (size {PreSize}->{PostSize}, mtime {PreMtime}->{PostMtime}) — nghi ky thuat scan-then-swap, KHONG tin ket qua verdict={Verdict}, coi la ScanError",
+                path, preScanSize, postScanSize, preScanWriteUtc, postScanWriteUtc, result.Verdict);
+            result = new ScanResultDto
+            {
+                Verdict = ScanVerdict.ScanError,
+                Stage = result.Stage,
+                Reason = "[TOCTOU_SUSPECTED] File thay doi giua luc xac nhan san sang va luc quet xong — ket qua truoc do khong dang tin, can quet lai",
+            };
+        }
+
         // Buoc 5: hanh dong theo verdict.
         switch (result.Verdict)
         {
@@ -101,7 +136,15 @@ public sealed class DownloadsWatcherService : BackgroundService
                 break;
 
             case ScanVerdict.Malicious:
-                _quarantine.QuarantineFile(path, result.Sha256Hex, result.Reason);
+                // [SUA LOI] TRUOC DAY goi QuarantineFile truc tiep, KHONG co
+                // try/catch — neu file bi xoa/di chuyen dung luc nay (hoac
+                // loi I/O khac khi quarantine), ngoai le se bay len va lam
+                // hong ca ProcessDownloadedFile (bi ProcessQueue's catch bat
+                // lai o tang tren, nhung audit "da quarantine" ben duoi se
+                // KHONG bao gio duoc ghi, gay sai lech giua thuc te va audit
+                // trail). Sua cho khop voi FullScanService.ScanOneFile (noi
+                // xu ly Malicious da duoc hardened voi try/catch tuong tu).
+                try { _quarantine.QuarantineFile(path, result.Sha256Hex, result.Reason); } catch { /* file co the da bi xoa/di chuyen */ }
                 _audit.Log("scan", $"Downloads: MALICIOUS -> da tu dong quarantine: {path}", result);
                 break;
 
@@ -118,7 +161,15 @@ public sealed class DownloadsWatcherService : BackgroundService
 
     // ERR-04 trong so tay loi: ERROR_SHARING_VIOLATION -> tiep tuc polling
     // moi ~200ms, timeout tong 30s cho file lon, khong coi la loi vinh vien.
-    private static bool WaitUntilFileReady(string path, TimeSpan interval, TimeSpan totalTimeout, CancellationToken ct)
+    //
+    // [PARTIALLY-FIXED] preScanSize/preScanWriteUtc duoc doc NGAY TRONG LUC
+    // con giu handle doc-doc-quyen (truoc khi dong) — dung lam "chu ky" de
+    // doi chieu sau khi quet (xem ProcessDownloadedFile). Day KHONG ngan
+    // chan hoan toan TOCTOU (van phai dong handle o day de ScanFile mo lai
+    // duoc BANG DUONG DAN — engine khong nhan handle da mo san), chi giup
+    // PHAT HIEN truong hop noi dung bi thay doi giua hai lan mo.
+    private static bool WaitUntilFileReady(string path, TimeSpan interval, TimeSpan totalTimeout, CancellationToken ct,
+        out long preScanSize, out DateTime preScanWriteUtc)
     {
         var deadline = DateTime.UtcNow + totalTimeout;
         while (DateTime.UtcNow < deadline)
@@ -127,10 +178,14 @@ public sealed class DownloadsWatcherService : BackgroundService
             try
             {
                 using var stream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.None);
+                preScanSize = stream.Length;
+                preScanWriteUtc = File.GetLastWriteTimeUtc(path);
                 return true;
             }
             catch (FileNotFoundException)
             {
+                preScanSize = 0;
+                preScanWriteUtc = default;
                 return false;
             }
             catch (IOException)
@@ -138,7 +193,32 @@ public sealed class DownloadsWatcherService : BackgroundService
                 Thread.Sleep(interval);
             }
         }
+        preScanSize = 0;
+        preScanWriteUtc = default;
         return false;
+    }
+
+    private static bool TryGetFileSignature(string path, out long size, out DateTime writeUtc)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            if (!info.Exists)
+            {
+                size = 0;
+                writeUtc = default;
+                return false;
+            }
+            size = info.Length;
+            writeUtc = info.LastWriteTimeUtc;
+            return true;
+        }
+        catch
+        {
+            size = 0;
+            writeUtc = default;
+            return false;
+        }
     }
 
     public override void Dispose()
