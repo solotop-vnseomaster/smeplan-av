@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <fstream>
 #include <sstream>
+#include <stdexcept>
 
 namespace {
 constexpr char kMagic[8] = { 'A','V','S','I','G','D','B','1' };
@@ -127,8 +128,24 @@ bool SignatureDb::BuildFromCsv(const wchar_t* csv_path, const wchar_t* out_db_pa
 
         SignatureRecord rec{};
         if (!HexToBytes32(hash_hex, rec.sha256)) continue;
-        rec.threat_id = static_cast<uint32_t>(std::stoul(threat_id_s));
-        rec.severity = static_cast<uint8_t>(std::stoul(severity_s));
+
+        // [SUA LOI NGHIEM TRONG] std::stoul NEM std::invalid_argument (chuoi
+        // khong phai so) hoac std::out_of_range (so vuot pham vi unsigned
+        // long) - truoc day khong duoc bat, nen mot dong CSV loi (vi du CSDL
+        // update bi hong/bi can thiep, hoac chi mot truong trong bi ghi sai
+        // dinh dang) se nem exception xuyen qua BuildFromCsv -> extern "C"
+        // Engine_BuildSignatureDb() -> qua bien P/Invoke sang service C# ->
+        // hanh vi khong xac dinh (P/Invoke boundary khong duoc thiet ke de
+        // truyen C++ exception) va lam CRASH tien trinh service dang cap
+        // nhat CSDL. Sua: bat loi parse, BO QUA dong hong nay (khong throw
+        // ra ngoai) va tiep tuc voi cac dong con lai, giu dung tinh chat
+        // "graceful" da ap dung cho cac loi I/O khac trong file nay.
+        try {
+            rec.threat_id = static_cast<uint32_t>(std::stoul(threat_id_s));
+            rec.severity = static_cast<uint8_t>(std::stoul(severity_s));
+        } catch (const std::exception&) {
+            continue;
+        }
         rec.reserved = 0;
         records.push_back(rec);
     }
