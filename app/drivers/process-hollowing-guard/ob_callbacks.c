@@ -234,6 +234,11 @@ SmePlanAvObProcessNotify(
     KeReleaseSpinLock(&gObContext.TableLock, oldIrql);
 }
 
+// Khai bao truoc (dinh nghia phia duoi, ngay sau SmePlanAvObPreOperationCallback) —
+// dung o hot path ben duoi truoc khi C compiler thay dinh nghia day du neu
+// khong khai bao truoc o day.
+static BOOLEAN SmePlanAvObIsUnrelatedAndNotWhitelisted(_In_ HANDLE RequesterPid, _In_ HANDLE TargetPid);
+
 OB_PREOP_CALLBACK_STATUS
 SmePlanAvObPreOperationCallback(
     _In_ PVOID RegistrationContext,
@@ -268,8 +273,22 @@ SmePlanAvObPreOperationCallback(
         return OB_PREOP_SUCCESS;
     }
 
-    if (SmePlanAvObIsUnrelatedProcess(requesterPid, targetPid) &&
-        !SmePlanAvObIsWhitelisted(requesterPid)) {
+    // [SUA LOI HIEU NANG] Truoc day goi rieng SmePlanAvObIsUnrelatedProcess roi
+    // SmePlanAvObIsWhitelisted — MOI ham tu KHOA spinlock TableLock (nang IRQL
+    // len DISPATCH_LEVEL) va QUET TOAN BO bang SMEPLANAV_OB_MAX_TRACKED_PROCESSES
+    // (8192) phan tu TUYEN TINH rieng biet, tren duong dan nong
+    // (SmePlanAvObPreOperationCallback chay cho MOI OpenProcess/DuplicateHandle xin
+    // PROCESS_VM_WRITE/PROCESS_VM_OPERATION — khong hiem, cac debugger/AV/EDR
+    // khac cung hay xin quyen nay). Tuc la TOI DA 2 lan khoa + 2 lan quet
+    // 8192 phan tu cho MOI lan goi. Sua: gop thanh MOT ham tinh CA HAI gia
+    // tri (quan he cha-con cua target VA trang thai whitelist cua requester)
+    // trong MOT lan khoa spinlock + MOT lan quet bang (thoat som ngay khi
+    // ca hai da tim thay, khong can doi het 8192 phan tu) — giam mot nua so
+    // lan khoa spinlock va thuong giam so buoc quet thuc te. SmePlanAvObIsUnrelatedProcess/
+    // SmePlanAvObIsWhitelisted van giu nguyen (dung o noi khac neu can), chi
+    // doi diem goi DUY NHAT nay — noi duy nhat ca hai gia tri can tinh CUNG
+    // luc — sang ham gop SmePlanAvObIsUnrelatedAndNotWhitelisted ben duoi.
+    if (SmePlanAvObIsUnrelatedAndNotWhitelisted(requesterPid, targetPid)) {
         // "Khong chan ngay tai day de tranh pha vo cong cu debug hop le,
         // chi ghi nhan va publish vao event bus de correlator danh gia" —
         // LUON tra OB_PREOP_SUCCESS, khong bao gio sua DesiredAccess de
@@ -278,6 +297,45 @@ SmePlanAvObPreOperationCallback(
     }
 
     return OB_PREOP_SUCCESS;
+}
+
+// [SUA LOI HIEU NANG] Gop logic cua SmePlanAvObIsUnrelatedProcess +
+// SmePlanAvObIsWhitelisted vao MOT lan khoa TableLock + MOT lan quet bang —
+// xem ghi chu chi tiet o diem goi DUY NHAT trong SmePlanAvObPreOperationCallback.
+// Ket qua tra ve giu NGUYEN ngu nghia "requester KHONG lien quan toi target
+// VA requester CHUA duoc whitelist" (dieu kien de ghi nhan truy cap dang
+// ngo vuc) — chi khac cach hien thuc noi bo.
+static BOOLEAN
+SmePlanAvObIsUnrelatedAndNotWhitelisted(_In_ HANDLE RequesterPid, _In_ HANDLE TargetPid)
+{
+    KIRQL oldIrql;
+    ULONG i;
+    HANDLE targetParent = NULL;
+    BOOLEAN foundTarget = FALSE;
+    BOOLEAN whitelisted = FALSE;
+    BOOLEAN foundRequester = FALSE;
+    BOOLEAN isUnrelated;
+
+    KeAcquireSpinLock(&gObContext.TableLock, &oldIrql);
+    for (i = 0; i < SMEPLANAV_OB_MAX_TRACKED_PROCESSES && !(foundTarget && foundRequester); i++) {
+        if (!foundTarget && gObContext.Table[i].InUse && gObContext.Table[i].ProcessId == TargetPid) {
+            targetParent = gObContext.Table[i].ParentProcessId;
+            foundTarget = TRUE;
+        }
+        if (!foundRequester && gObContext.Table[i].InUse && gObContext.Table[i].ProcessId == RequesterPid) {
+            whitelisted = gObContext.Table[i].Whitelisted;
+            foundRequester = TRUE;
+        }
+    }
+    KeReleaseSpinLock(&gObContext.TableLock, oldIrql);
+
+    // Giong het SmePlanAvObIsUnrelatedProcess: khong tim thay du lieu ve target ->
+    // coi la "khong ro quan he", nghieng ve phia GHI NHAN (an toan hon bo sot).
+    isUnrelated = !foundTarget || (targetParent != RequesterPid);
+
+    // foundRequester == FALSE -> whitelisted van la FALSE (gia tri khoi tao),
+    // giong het hanh vi mac dinh cua SmePlanAvObIsWhitelisted khi khong tim thay PID.
+    return isUnrelated && !whitelisted;
 }
 
 BOOLEAN
