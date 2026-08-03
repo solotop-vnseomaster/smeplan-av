@@ -22,7 +22,21 @@ public sealed class ScanCacheStore
 
     public ScanCacheStore(string dbPath)
     {
-        _connectionString = $"Data Source={dbPath}";
+        // [SUA LOI HIEU NANG] TRUOC DAY busy_timeout duoc dat lai bang mot
+        // lenh PRAGMA THUC THI RIENG tren MOI Open() (xem lich su ham Open()
+        // duoi day) — ke ca tren duong CACHE-HIT nong nhat (TryGetCached goi
+        // MOI file duoc quet trong full scan), moi lan nhu vay ton them mot
+        // round-trip prepare/step/finalize khong can thiet. Microsoft.Data.
+        // Sqlite ho tro dat busy timeout NGAY TRONG connection string qua
+        // "Default Timeout" (giay) — provider tu ap dung sqlite3_busy_timeout
+        // luc mo ket noi, KHONG can lenh PRAGMA thu cong nao nua. Sua: chuyen
+        // sang co che nay, loai bo hoan toan chi phi PRAGMA lap lai tren
+        // duong nong.
+        _connectionString = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+        {
+            DataSource = dbPath,
+            DefaultTimeout = 5, // giay — tuong duong PRAGMA busy_timeout=5000 truoc day
+        }.ToString();
         Initialize();
     }
 
@@ -56,18 +70,15 @@ public sealed class ScanCacheStore
     // day la nghen co chai I/O/lock contention nghiem trong, lam scan cham
     // han hoac loi giua chung. Sua: bat WAL mode (cho phep nhieu doc gia
     // dong thoi voi 1 ghi, giam khoa) trong Initialize(), va dat busy_timeout
-    // TREN MOI CONNECTION (day la pragma theo tung ket noi, khong luu trong
-    // file DB nen phai dat lai moi lan Open()) de cac thread doi nhau thay
-    // vi that bai ngay khi gap tranh chap khoa ngan han.
+    // qua "Default Timeout" TRONG CONNECTION STRING (xem constructor) — day
+    // la thiet lap provider ap dung TU DONG luc Open(), khong con can thuc
+    // thi mot lenh PRAGMA rieng tren MOI Open() nua (truoc day dieu nay lap
+    // lai ke ca tren duong cache-hit nong nhat, xem [SUA LOI HIEU NANG #2]
+    // tai constructor).
     private SqliteConnection Open()
     {
         var conn = new SqliteConnection(_connectionString);
         conn.Open();
-        using (var pragmaCmd = conn.CreateCommand())
-        {
-            pragmaCmd.CommandText = "PRAGMA busy_timeout=5000;";
-            pragmaCmd.ExecuteNonQuery();
-        }
         return conn;
     }
 
