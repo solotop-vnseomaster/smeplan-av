@@ -57,12 +57,26 @@ void HeuristicEngine::AnalyzePe(const uint8_t* data, size_t length, HeuristicRes
     if (length < sizeof(IMAGE_DOS_HEADER)) return;
     auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(data);
     if (dos->e_magic != IMAGE_DOS_SIGNATURE) return; // khong phai PE, bo qua phan tich PE
-    if (dos->e_lfanew < 0 || static_cast<size_t>(dos->e_lfanew) + sizeof(IMAGE_NT_HEADERS64) > length) return;
+    // [SUA LOI NGHIEM TRONG] Check bien nay TRUOC DAY luon dung
+    // sizeof(IMAGE_NT_HEADERS64) (lon hon) cho MOI file, ke ca khi file sau
+    // do hoa ra la PE32 (32-bit) - IMAGE_NT_HEADERS64 lon hon
+    // IMAGE_NT_HEADERS32 dung 16 byte (do IMAGE_OPTIONAL_HEADER64 co vai
+    // truong 64-bit lon hon). Hau qua: mot file PE32 hop le, nho, ma phan
+    // header nam sat cuoi file (dung 248 byte nhung khong du 264 byte) se
+    // bi tra ve SOM o day va BO QUA toan bo phan tich PE (entry-point/IAT),
+    // lam giam do chinh xac heuristic tren chinh nhung file be nho/toi gian
+    // - dang duoc cac kim tra dung nhat. Sua: kiem tra truoc voi
+    // sizeof(IMAGE_NT_HEADERS32) (du an toan de doc Signature/FileHeader/
+    // Magic - phan dau giong het nhau giua PE32 va PE32+), roi kiem tra
+    // THEM voi sizeof(IMAGE_NT_HEADERS64) CHI khi xac dinh la PE32+ truoc
+    // khi dereference cac truong rieng cua OptionalHeader64.
+    if (dos->e_lfanew < 0 || static_cast<size_t>(dos->e_lfanew) + sizeof(IMAGE_NT_HEADERS32) > length) return;
 
     auto* nt32 = reinterpret_cast<const IMAGE_NT_HEADERS32*>(data + dos->e_lfanew);
     if (nt32->Signature != IMAGE_NT_SIGNATURE) return;
 
     bool is_pe32_plus = (nt32->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC);
+    if (is_pe32_plus && static_cast<size_t>(dos->e_lfanew) + sizeof(IMAGE_NT_HEADERS64) > length) return;
     DWORD entry_point_rva;
     DWORD import_dir_rva = 0, import_dir_size = 0;
     const IMAGE_SECTION_HEADER* sections;
