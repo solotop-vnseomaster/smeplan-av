@@ -108,9 +108,22 @@ public sealed class RansomwareGuardService : BackgroundService
         // chiem qua nhieu dung luong/dia ngay luc dau tren may nguoi dung
         // that — day la ban DEMO minh hoa co che, khong phai backup toan
         // dien moi file nguoi dung co.
+        // [HAN CHE DA BIET] File VUOT qua maxFilesToSnapshot hoac lon hon
+        // maxFileSizeBytes se KHONG BAO GIO co baseline snapshot — neu
+        // ransomware ma hoa dung nhung file nay TRUOC khi co su kien ghi
+        // nao khac (FileSystemWatcher chua kip snapshot "lan dau quan sat"
+        // cho chung), noi dung goc bi mat vinh vien, RestoreLatestVersion
+        // se tra ve false cho cac duong dan do. Day la gioi han co chu y
+        // cua ban DEMO minh hoa co che (khong phai backup toan dien), khong
+        // phai loi — nhung can neu ro de khong bi hieu nham la "moi file
+        // trong thu muc bao ve deu phuc hoi duoc".
         const int maxFilesToSnapshot = 500;
         const long maxFileSizeBytes = 20L * 1024 * 1024; // 20MB
         int count = 0;
+        // Dung CHUNG mot ket noi SQLite cho toan bo vong lap (co the qua
+        // hang tram file) thay vi moi file tu mo/dong ket noi rieng — xem
+        // ghi chu tai VersionStore.OpenBatch.
+        using var batch = _versionStore.OpenBatch();
         foreach (var folder in DefaultProtectedFolders)
         {
             if (!Directory.Exists(folder)) continue;
@@ -133,9 +146,9 @@ public sealed class RansomwareGuardService : BackgroundService
             foreach (var file in files)
             {
                 if (count >= maxFilesToSnapshot) return;
-                if (_versionStore.GetLatestVersion(file) is not null) continue; // da co roi
+                if (batch.GetLatestVersion(file) is not null) continue; // da co roi
                 try { if (new FileInfo(file).Length > maxFileSizeBytes) continue; } catch { continue; }
-                _versionStore.SnapshotFile(file, triggeredByPid: 0);
+                batch.SnapshotFile(file, triggeredByPid: 0);
                 count++;
             }
         }
@@ -192,9 +205,14 @@ public sealed class RansomwareGuardService : BackgroundService
         // duoc xac nhan du 3 tin hieu (xem ghi chu o nhanh else ben duoi).
         int entropyJumps = 0;
         var suspiciousPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Dung CHUNG mot ket noi SQLite cho ca cua so nay (kiem tra entropy,
+        // rollback, snapshot ben duoi co the qua nhieu file) thay vi moi
+        // loi goi VersionStore tu mo/dong ket noi rieng — xem ghi chu tai
+        // VersionStore.OpenBatch.
+        using var batch = _versionStore.OpenBatch();
         foreach (var path in distinctPaths)
         {
-            var oldVersion = _versionStore.GetLatestVersion(path);
+            var oldVersion = batch.GetLatestVersion(path);
             if (oldVersion is null || !File.Exists(oldVersion.StoredPath) || !File.Exists(path)) continue;
             try
             {
@@ -226,17 +244,28 @@ public sealed class RansomwareGuardService : BackgroundService
 
         bool ransomwareConfirmed = writeRateSignal && entropySignal && extensionSignal;
         bool rolledBack = false;
+        int restoredCount = 0;
 
         if (ransomwareConfirmed)
         {
-            int restored = 0;
             foreach (var path in distinctPaths)
             {
-                if (_versionStore.RestoreLatestVersion(path)) restored++;
+                if (batch.RestoreLatestVersion(path)) restoredCount++;
             }
-            rolledBack = restored > 0;
+            // [SUA LOI NGHIEM TRONG] TRUOC DAY rolledBack (va thong bao keo
+            // theo) chi phan biet "co khoi phuc duoc it nhat 1 file" (thanh
+            // cong) hay "khong khoi phuc duoc file nao" (that bai mot phan) —
+            // ke ca khi chi 1/500 file duoc khoi phuc, thong bao van ghi
+            // "da tu dong khoi phuc (thanh cong)", khien nguoi dung tuong
+            // TOAN BO file da duoc cuu trong khi 499 file con lai da mat
+            // vinh vien (vi khong co baseline snapshot — xem ghi chu tren
+            // BaselineSnapshotExistingFiles). Sua: rolledBack gio phan anh
+            // dung "khoi phuc DAY DU" (restoredCount == distinctPaths.Count),
+            // va Summary ben duoi bao ro so lieu X/Y thay vi mot chu
+            // "thanh cong" khong dieu kien.
+            rolledBack = restoredCount == distinctPaths.Count;
             _logger.LogWarning("RANSOMWARE XAC NHAN: {Count} file bi anh huong, da khoi phuc {Restored} file tu version store",
-                distinctPaths.Count, restored);
+                distinctPaths.Count, restoredCount);
         }
         else
         {
@@ -261,7 +290,7 @@ public sealed class RansomwareGuardService : BackgroundService
             foreach (var path in distinctPaths.Take(50))
             {
                 if (suspiciousPaths.Contains(path)) continue;
-                _versionStore.SnapshotFile(path, triggeredByPid: 0);
+                batch.SnapshotFile(path, triggeredByPid: 0);
             }
         }
 
@@ -287,7 +316,8 @@ public sealed class RansomwareGuardService : BackgroundService
             SourceEngine = "ransomware",
             Severity = ransomwareConfirmed ? 95 : (signalCount == 2 ? 55 : 25),
             Summary = ransomwareConfirmed
-                ? $"XAC NHAN ransomware: {distinctPaths.Count} file bi anh huong, da tu dong khoi phuc ({(rolledBack ? "thanh cong" : "that bai mot phan")})"
+                ? $"XAC NHAN ransomware: {distinctPaths.Count} file bi anh huong, da khoi phuc {restoredCount}/{distinctPaths.Count} file" +
+                  (restoredCount < distinctPaths.Count ? $" ({distinctPaths.Count - restoredCount} file KHONG the khoi phuc duoc)" : "")
                 : $"Hoat dong ghi file dang ngo ({signalCount}/3 tin hieu): {distinctPaths.Count} file trong 20s",
             TimestampUnixMs = now,
         });
