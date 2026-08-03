@@ -1,0 +1,8 @@
+[Bb]in/
+[Oo]bj/
+app/engine/build/
+*.dll
+*.pdb
+*.ilk
+*.obj
+*.user

@@ -1,3 +1,0 @@
-﻿<Project>
-  <Import Project="..\build\Antivirus.Service.props" />
-</Project>
