@@ -34,6 +34,27 @@ public static class Program
         using var http = new HttpClient { BaseAddress = new Uri(ApiBaseUrl), Timeout = TimeSpan.FromSeconds(2) };
 
         string? token = TryReadApiToken();
+        // [SUA LOI — xem ghi chu ACL o dau file] TRUOC DAY khi doc token that
+        // bai (vi du ACL chi cho SYSTEM/service doc, native host chay quyen
+        // NGUOI DUNG thuong khong co quyen), loi nay HOAN TOAN IM LANG — Main()
+        // tiep tuc chay binh thuong voi token=null, va tinh nang chan phishing
+        // AM THAM fail-open (moi request toi /api/phishing/check-url khong co
+        // header X-Av-Token, rat co the bi service tu choi/bo qua ma KHONG AI
+        // biet). Day khong phai fix kien truc day du (van CAN mot co che cap
+        // quyen doc rieng cho nhom Users, vi du named pipe rieng — ngoai pham
+        // vi file tham khao nay), nhung it nhat phai LOG RO RANG ra stderr
+        // (Chrome Native Messaging KHONG doc/can thiep stderr cua native host,
+        // day la kenh an toan de chan doan) de admin/nguoi phat trien co the
+        // phat hien tinh trang fail-open nay thay vi no troi qua trong im lang.
+        if (token is null)
+        {
+            await Console.Error.WriteLineAsync(
+                $"[CANH BAO] SMEPlan AV native host: KHONG doc duoc api-token.txt — " +
+                $"tinh nang chan phishing se chay o che do FAIL-OPEN (khong co token xac thuc, " +
+                $"cac yeu cau /api/phishing/check-url co the bi service tu choi ma khong bao loi ro). " +
+                $"Nguyen nhan pho bien: ACL cua api-token.txt chi cho SYSTEM/Administrators doc, " +
+                $"trong khi native host nay dang chay duoi quyen nguoi dung thuong.");
+        }
 
         while (true)
         {
@@ -94,14 +115,30 @@ public static class Program
 
     private static string? TryReadApiToken()
     {
+        string path = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "AntivirusApp", "data", "api-token.txt");
         try
         {
-            string path = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-                "AntivirusApp", "data", "api-token.txt");
-            return File.Exists(path) ? File.ReadAllText(path).Trim() : null;
+            if (!File.Exists(path))
+            {
+                Console.Error.WriteLine($"[CANH BAO] SMEPlan AV native host: khong tim thay {path} (service co the chua chay lan nao, hoac chua tao token).");
+                return null;
+            }
+            return File.ReadAllText(path).Trim();
         }
-        catch { return null; }
+        catch (Exception ex)
+        {
+            // Phan biet ro voi truong hop "file khong ton tai" o tren — vao
+            // day nghia la file CO TON TAI nhung KHONG DOC DUOC, truong hop
+            // pho bien nhat la UnauthorizedAccessException do ACL cua file
+            // chi cap quyen cho SYSTEM/Administrators (xem ghi chu dau file):
+            // day chinh la trieu chung cua han che ACL da biet, ghi log ro
+            // loai ngoai le de de chan doan hon la mot "token=null" chung
+            // chung khong ro nguyen nhan.
+            Console.Error.WriteLine($"[CANH BAO] SMEPlan AV native host: doc {path} that bai ({ex.GetType().Name}: {ex.Message}) — rat co the do ACL chi cho SYSTEM/Administrators doc trong khi native host chay quyen nguoi dung thuong.");
+            return null;
+        }
     }
 
     private static async Task<JsonElement?> ReadMessageAsync(Stream stdin)
