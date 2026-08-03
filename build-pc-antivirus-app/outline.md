@@ -1,0 +1,34 @@
+- Tổng quan kiến trúc app antivirus Windows | 280 | Sơ đồ mô tả các thành phần chính: UI, service nền, scan engine, driver kernel-mode, CSDL signature, và cách chúng giao tiếp
+- Lựa chọn ngôn ngữ và stack kỹ thuật | 300 | So sánh C++/Rust cho engine và driver với C#/.NET cho UI/service, lý do chọn kết hợp thay vì một ngôn ngữ duy nhất
+- Yêu cầu và rào cản của Windows với phần mềm bảo mật | 380 | Giải thích ELAM, driver signing bắt buộc từ Windows 10 1607, WHQL, và lý do các rào cản này tồn tại
+- Thiết lập môi trường phát triển | 260 | Checklist công cụ: Visual Studio, Windows SDK, WDK, test signing mode, EV code signing certificate
+- Nguyên tắc mặc định tin cậy ứng dụng gốc Windows | 320 | Ba tiêu chí kết hợp: chữ ký số Authenticode, publisher name, vị trí thư mục được WRP bảo vệ
+- Kiểm tra chữ ký số Authenticode để whitelist mặc định | 380 | Pseudo-code kiểm tra publisher certificate của một tiến trình bằng WinVerifyTrust
+- Giới hạn của whitelist theo chữ ký số | 260 | Nêu rõ trường hợp signature-based check không đủ (rootkit đã có quyền hệ thống) và phạm vi thực tế của kỹ thuật này
+- Thiết kế chính sách kiểm soát ứng dụng bằng AppLocker/WDAC | 400 | Ví dụ policy XML áp rule mặc định allow theo publisher Microsoft, deny/ask cho phần còn lại
+- Giao diện tùy biến quyền cho ứng dụng bên thứ 3 | 360 | Luồng UI cho người dùng set rule allow/block/hỏi mỗi lần, và cách tránh UI này bị chính malware tự động click qua
+- Lưu trữ và quản lý rule phân quyền | 280 | Schema lưu rule cục bộ (SQLite) theo hash + publisher, cách áp rule khi có tiến trình mới
+- Engine giám sát tiến trình theo thời gian thực | 350 | Dùng ETW process-creation provider hoặc PsSetCreateProcessNotifyRoutine để theo dõi tiến trình mới sinh ra
+- Luồng xử lý khi một ứng dụng thực thi | 280 | Sơ đồ quyết định allow/block/hỏi dựa trên rule đã lưu, độ trễ chấp nhận được khi tra cứu rule
+- Thiết kế tổng thể bộ máy quét (scan engine) | 280 | Kiến trúc scan engine tách biệt khỏi UI, dùng chung được cho cả full scan và real-time protection
+- Xây dựng cơ sở dữ liệu signature dựa trên hash | 340 | Cách tạo, lưu và tra cứu CSDL hash mã độc đã biết (SHA-256, cấu trúc bloom filter để tra nhanh)
+- Kỹ thuật heuristic phát hiện hành vi bất thường | 380 | Ví dụ rule heuristic cụ thể: entropy cao bất thường, gọi API nhạy cảm, packer lạ
+- Tích hợp YARA rules vào scan engine | 340 | Một YARA rule đơn giản và cách engine áp dụng nó lên file trong lúc quét
+- Xây dựng chức năng Full/Deep Scan toàn bộ ổ đĩa | 400 | Thuật toán enumerate file qua USN Journal thay vì duyệt cây thư mục, xử lý đa luồng
+- Tối ưu hiệu năng khi quét sâu | 340 | Hạ I/O priority, sắp xếp thứ tự đọc theo cluster vật lý trên HDD, tạm dừng khi người dùng đang thao tác
+- Quét trong file nén và chống zip bomb | 340 | Streaming decompression, giới hạn tỷ lệ nén/độ sâu lồng nhau/trần dung lượng tuyệt đối
+- Kiến trúc Real-time Protection bằng minifilter driver | 400 | Đăng ký FltRegisterFilter, xin altitude, hook IRP_MJ_CREATE để chặn file trước khi mở
+- Giảm độ trễ khi quét theo thời gian thực | 320 | Cache kết quả theo hash + thời gian sửa đổi, chỉ chặn đồng bộ với file thực thi, cách đo latency bằng QueryPerformanceCounter
+- Viết Early Launch Antimalware driver cơ bản | 380 | Đăng ký boot-start group Early-Launch, cơ chế phân loại Good/Bad/Unknown, tham chiếu ELAM sample trong WDK
+- Ký số driver với Microsoft | 380 | Quy trình attestation signing qua Partner Center, khi nào cần đi thẳng WHQL/HLK cho driver antivirus
+- Giám sát riêng thư mục Downloads | 360 | Dùng ReadDirectoryChangesW bắt sự kiện rename từ .crdownload/.part, xử lý trường hợp tải bằng công cụ dòng lệnh
+- Luồng xử lý khi phát hiện file tải về đáng ngờ | 320 | Đưa file vào hàng đợi, đợi handle ghi đóng hoàn toàn trước khi quét, cảnh báo hoặc cách ly
+- Cơ chế Quarantine cách ly file nghi ngờ | 320 | Thiết kế thư mục cách ly có mã hóa/đổi tên, khả năng khôi phục nếu false positive gỡ nhầm file hệ thống
+- Cập nhật cơ sở dữ liệu virus tự động | 280 | Thiết kế update service định kỳ, incremental update theo delta thay vì tải lại toàn bộ CSDL
+- Kiểm thử với file EICAR và bộ mẫu an toàn | 280 | Dùng chuỗi test EICAR để kiểm thử toàn bộ pipeline phát hiện từ real-time đến full scan
+- Xử lý false positive với whitelist nhiều lớp | 360 | Rule mới chạy log-only trước khi enforce, whitelist theo hash cho file tĩnh và theo publisher/certificate cho file build liên tục
+- Đăng ký với Windows Security Center và tránh xung đột Defender | 380 | Con đường thực tế qua Microsoft Virus Initiative, cách loại trừ tạm thời trong giai đoạn phát triển bằng Add-MpPreference
+- Chống tắt ứng dụng bằng Protected Process Light | 300 | Cơ chế tamper protection dựa trên PPL signer level Antimalware, yêu cầu ELAM certificate
+- Logging và báo cáo cho người dùng | 260 | Thiết kế log audit trail cục bộ và màn hình báo cáo hoạt động bảo mật cho người dùng
+- Đóng gói, ký số installer và checklist phát hành | 300 | Danh sách việc cần làm trước khi phát hành bản build đầu tiên, từ code signing installer đến exclusion khi test
+- Những lỗi thường gặp khi tự xây antivirus | 340 | Các sai lầm phổ biến: tin vào tên file, quét đồng bộ mọi loại file, bỏ qua đo hiệu năng trước khi ship

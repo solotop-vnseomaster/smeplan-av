@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SMEPlan AV — Trung tâm bảo vệ</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app-shell">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark"><span class="brand-ring"></span><span class="brand-core"></span></div>
+      <div class="brand-text">
+        <strong>SMEPlan<span class="accent"> AV</span></strong>
+        <small>Antivirus Windows</small>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <button class="nav-item active" data-view="dashboard">
+        <svg viewBox="0 0 24 24"><path d="M3 12l9-9 9 9M5 10v10h14V10"/></svg>
+        <span>Tổng quan</span>
+      </button>
+      <button class="nav-item" data-view="scan">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <span>Quét sâu</span>
+      </button>
+      <button class="nav-item" data-view="quarantine">
+        <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9l6 6M15 9l-6 6"/></svg>
+        <span>Quarantine</span>
+      </button>
+      <button class="nav-item" data-view="rules">
+        <svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/></svg>
+        <span>Quyền ứng dụng</span>
+      </button>
+      <button class="nav-item" data-view="downloads">
+        <svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16"/></svg>
+        <span>Downloads</span>
+      </button>
+      <button class="nav-item" data-view="audit">
+        <svg viewBox="0 0 24 24"><path d="M4 19V5a2 2 0 012-2h9l5 5v11a2 2 0 01-2 2H6a2 2 0 01-2-2z"/><path d="M9 9h6M9 13h6M9 17h3"/></svg>
+        <span>Nhật ký</span>
+      </button>
+      <button class="nav-item" data-view="update">
+        <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 11-3-6.7"/><path d="M21 4v6h-6"/></svg>
+        <span>Cập nhật CSDL</span>
+      </button>
+
+      <div class="nav-section-label">Mở rộng</div>
+
+      <button class="nav-item" data-view="firewall">
+        <svg viewBox="0 0 24 24"><path d="M3 4h18v6c0 7-4 10-9 12-5-2-9-5-9-12V4z"/><path d="M9 12l2 2 4-4"/></svg>
+        <span>Firewall</span>
+      </button>
+      <button class="nav-item" data-view="ransomware">
+        <svg viewBox="0 0 24 24"><path d="M12 2v6M12 2l3 3M12 2L9 5"/><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M9 15h6"/></svg>
+        <span>Chống Ransomware</span>
+      </button>
+      <button class="nav-item" data-view="usb">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><path d="M12 7v9m0 0l-4 4m4-4l4 4"/></svg>
+        <span>Thiết bị USB</span>
+      </button>
+      <button class="nav-item" data-view="vuln">
+        <svg viewBox="0 0 24 24"><path d="M12 2l9 4.5v6C21 17 17 21 12 22 7 21 3 17 3 12.5v-6L12 2z"/><path d="M12 8v5M12 16h.01"/></svg>
+        <span>Lỗ hổng phần mềm</span>
+      </button>
+      <button class="nav-item" data-view="privacy">
+        <svg viewBox="0 0 24 24"><rect x="3" y="7" width="12" height="10" rx="2"/><path d="M15 10l6-3v10l-6-3"/></svg>
+        <span>Webcam &amp; Mic</span>
+      </button>
+      <button class="nav-item" data-view="network">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M12 7v6M12 13L6 18M12 13l6 5"/></svg>
+        <span>Mạng gia đình</span>
+      </button>
+      <button class="nav-item" data-view="alerts">
+        <svg viewBox="0 0 24 24"><path d="M12 3l9 16H3z"/><path d="M12 9v5M12 17h.01"/></svg>
+        <span>Trung tâm cảnh báo</span>
+      </button>
+      <button class="nav-item" data-view="advanced">
+        <svg viewBox="0 0 24 24"><path d="M4 5h16M4 12h10M4 19h16"/><circle cx="18" cy="12" r="2"/></svg>
+        <span>Nâng cao</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="conn-dot" id="connDot"></div>
+      <span id="connLabel">Đang kết nối service…</span>
+    </div>
+  </aside>
+
+  <main class="main">
+
+    <!-- ================= DASHBOARD (UI-01) ================= -->
+    <section class="view active" id="view-dashboard">
+      <header class="view-header">
+        <h1>Tổng quan bảo vệ</h1>
+        <p class="muted">Trạng thái thời gian thực của các lớp phòng thủ</p>
+      </header>
+
+      <div class="grid grid-top">
+        <div class="card glass status-card">
+          <div class="ring-wrap">
+            <svg viewBox="0 0 120 120" class="ring">
+              <circle cx="60" cy="60" r="52" class="ring-track"/>
+              <circle cx="60" cy="60" r="52" class="ring-progress" id="protectionRing"/>
+            </svg>
+            <div class="ring-center">
+              <span class="ring-icon">🛡</span>
+              <strong id="protectionState">Đang bảo vệ</strong>
+            </div>
+          </div>
+          <div class="status-meta">
+            <div class="meta-row"><span>Real-time watcher</span><b id="rtStatus" class="pill pill-ok">Hoạt động</b></div>
+            <div class="meta-row"><span>Downloads guard</span><b class="pill pill-ok">Hoạt động</b></div>
+            <div class="meta-row"><span>Driver kernel-mode</span><b class="pill pill-warn">Chưa nạp (xem hạn chế)</b></div>
+          </div>
+        </div>
+
+        <div class="card glass stat-block">
+          <div class="stat"><div class="stat-num" id="statBlocked">0</div><div class="stat-label">Đã chặn (process)</div></div>
+          <div class="stat"><div class="stat-num" id="statQuarantined">0</div><div class="stat-label">Trong Quarantine</div></div>
+          <div class="stat"><div class="stat-num" id="statRules">0</div><div class="stat-label">Rule đã lưu</div></div>
+          <div class="stat"><div class="stat-num" id="statSigVersion">v0</div><div class="stat-label">Phiên bản CSDL</div></div>
+        </div>
+      </div>
+
+      <div class="grid grid-top">
+        <div class="card glass status-card">
+          <div class="ring-wrap">
+            <svg viewBox="0 0 120 120" class="ring">
+              <circle cx="60" cy="60" r="52" class="ring-track"/>
+              <circle cx="60" cy="60" r="52" class="ring-progress" id="riskRing"/>
+            </svg>
+            <div class="ring-center">
+              <strong id="riskScoreNum" style="font-size:26px">—</strong>
+              <span id="riskScoreLabel" class="small muted">Đang tải…</span>
+            </div>
+          </div>
+          <div class="status-meta" id="riskComponents"></div>
+        </div>
+
+        <div class="card glass">
+          <div class="card-head"><h3>🎮 Gaming / Silent mode &amp; Scheduler</h3><span class="muted small">Trạng thái điều phối tác vụ nền</span></div>
+          <div class="meta-row"><span>Ứng dụng fullscreen (Direct3D exclusive)</span><b id="gamingModeStatus" class="pill">—</b></div>
+          <div class="meta-row"><span>Máy đang idle (theo GetLastInputInfo)</span><b id="schedulerIdleStatus" class="pill">—</b></div>
+          <div class="meta-row"><span>Tác vụ nền đã đăng ký</span><b id="schedulerTaskCount" class="pill">—</b></div>
+          <p class="muted small" style="margin-top:10px">Khi đang chơi game fullscreen: ẩn toast, tạm dừng full scan/quét lỗ hổng/giám sát mạng — real-time protection và firewall vẫn hoạt động đầy đủ.</p>
+        </div>
+      </div>
+
+      <div class="card glass">
+        <div class="card-head"><h3>Quét nhanh một file</h3><span class="muted small">Ví dụ: thử với file EICAR test</span></div>
+        <div class="row-input">
+          <input type="text" id="quickScanPath" placeholder="C:\đường\dẫn\tới\file.exe">
+          <button class="btn btn-primary" id="quickScanBtn">Quét</button>
+        </div>
+        <div id="quickScanResult" class="scan-result"></div>
+      </div>
+
+      <div class="card glass">
+        <div class="card-head"><h3>📊 Thống kê hoạt động</h3><span class="muted small" id="statsTotalEvents"></span></div>
+        <div class="activity-stats" id="activityStats"></div>
+        <ul class="mini-log" id="dashboardLog"></ul>
+      </div>
+    </section>
+
+    <!-- ================= FULL SCAN (UI-02) ================= -->
+    <section class="view" id="view-scan">
+      <header class="view-header">
+        <h1>Full / Deep Scan</h1>
+        <p class="muted">Quét toàn bộ ổ đĩa qua USN Journal (NTFS) hoặc duyệt cây thư mục (FAT32/exFAT)</p>
+      </header>
+
+      <div class="card glass">
+        <div class="toggle-row">
+          <div>
+            <div class="tr-label">⚡ Cache full scan</div>
+            <div class="tr-desc">Bỏ qua file không đổi từ lần quét trước (cùng đường dẫn/thời gian sửa/kích thước và cùng phiên bản CSDL) — tự xoá cache khi CSDL cập nhật.</div>
+          </div>
+          <button class="toggle-switch" id="cacheToggle" aria-pressed="false"></button>
+        </div>
+
+        <div class="row-input">
+          <input type="text" id="scanVolume" value="C:\" placeholder="Ổ đĩa, ví dụ C:\">
+          <button class="btn btn-primary" id="scanStartBtn">Bắt đầu</button>
+          <button class="btn btn-ghost" id="scanPauseBtn">Tạm dừng</button>
+          <button class="btn btn-ghost" id="scanResumeBtn">Tiếp tục</button>
+          <button class="btn btn-danger" id="scanCancelBtn">Hủy</button>
+        </div>
+
+        <div class="progress-wrap">
+          <div class="progress-bar"><div class="progress-fill" id="scanProgressFill"></div></div>
+          <div class="progress-meta">
+            <span id="scanStatusText">Chưa chạy</span>
+            <span id="scanCurrentFile" class="muted small"></span>
+          </div>
+        </div>
+
+        <div class="grid grid-4">
+          <div class="stat"><div class="stat-num" id="scanFiles">0</div><div class="stat-label">Đã quét</div></div>
+          <div class="stat"><div class="stat-num" id="scanCached">0</div><div class="stat-label">Từ cache</div></div>
+          <div class="stat"><div class="stat-num danger" id="scanMalicious">0</div><div class="stat-label">Malicious</div></div>
+          <div class="stat"><div class="stat-num warn" id="scanSuspicious">0</div><div class="stat-label">Suspicious</div></div>
+          <div class="stat"><div class="stat-num" id="scanErrors">0</div><div class="stat-label">Lỗi quét</div></div>
+        </div>
+      </div>
+
+      <!-- Bao cao khi scan hoan tat -->
+      <div class="card glass" id="scanReportCard" style="display:none">
+        <div class="card-head"><h3>📋 Báo cáo kết thúc scan</h3><span class="muted small" id="scanReportMeta"></span></div>
+        <p id="scanReportSummary" class="report-summary"></p>
+      </div>
+
+      <!-- Danh sach file bi gan co — cap nhat song song luc dang quet, bam
+           vao tung dong de xem chi tiet (yeu cau nguoi dung). Co bo loc
+           tach Malicious/Suspicious khoi Loi (ScanError) vi so luong loi
+           thuong rat lon (file he thong dang bi khoa/thieu quyen) va lam
+           chim mat cac phat hien thuc su quan trong. -->
+      <div class="card glass">
+        <div class="card-head"><h3>File bị gắn cờ</h3><span class="muted small">Cập nhật trực tiếp trong lúc quét — bấm vào một dòng để xem chi tiết</span></div>
+
+        <div class="filter-row" id="flaggedFilters">
+          <button class="filter-chip active" data-filter="important">
+            <span class="fc-label">Malicious + Suspicious</span><span class="fc-count" id="fcImportant">0</span>
+          </button>
+          <button class="filter-chip" data-filter="Malicious">
+            <span class="fc-label">☠ Malicious</span><span class="fc-count" id="fcMalicious">0</span>
+          </button>
+          <button class="filter-chip" data-filter="Suspicious">
+            <span class="fc-label">⚠ Suspicious</span><span class="fc-count" id="fcSuspicious">0</span>
+          </button>
+          <button class="filter-chip" data-filter="ScanError">
+            <span class="fc-label">❌ Lỗi đọc file</span><span class="fc-count" id="fcError">0</span>
+          </button>
+          <button class="filter-chip" data-filter="all">
+            <span class="fc-label">Tất cả</span><span class="fc-count" id="fcAll">0</span>
+          </button>
+        </div>
+
+        <!-- Phan tich nguyen nhan loi (chi hien khi filter = Loi doc file) -->
+        <div id="errorBreakdown" class="error-breakdown" style="display:none"></div>
+
+        <ul class="flagged-list" id="flaggedList"></ul>
+        <p class="empty-hint" id="flaggedEmpty">Chưa có file nào khớp bộ lọc hiện tại.</p>
+      </div>
+    </section>
+
+    <!-- ================= QUARANTINE (UI-03) ================= -->
+    <section class="view" id="view-quarantine">
+      <header class="view-header">
+        <h1>Quarantine</h1>
+        <p class="muted">File bị cách ly (không phải xoá) — mã hoá và cắt khỏi vị trí gốc để không tự chạy được. Khôi phục hoặc xoá vĩnh viễn chỉ qua đây, không qua Explorer</p>
+      </header>
+
+      <div class="card glass">
+        <table class="data-table" id="quarantineTable">
+          <thead><tr><th>File gốc</th><th>Hash</th><th>Lý do</th><th>Trạng thái</th><th>Thời điểm</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <p class="empty-hint" id="quarantineEmpty">Chưa có file nào trong quarantine.</p>
+      </div>
+    </section>
+
+    <!-- ================= RULES (UI-04) ================= -->
+    <section class="view" id="view-rules">
+      <header class="view-header">
+        <h1>Quyền ứng dụng (app_rules)</h1>
+        <p class="muted">Danh sách allow/block theo hash hoặc publisher</p>
+      </header>
+
+      <div class="card glass">
+        <div class="row-input wrap">
+          <input type="text" id="ruleHash" placeholder="SHA-256 hash">
+          <input type="text" id="rulePublisher" placeholder="Publisher thumbprint (tuỳ chọn)">
+          <input type="text" id="rulePath" placeholder="Đường dẫn file">
+          <select id="ruleAction"><option value="Allow">Allow</option><option value="Block">Block</option></select>
+          <select id="ruleScope"><option value="Hash">Scope: Hash</option><option value="Publisher">Scope: Publisher</option></select>
+          <button class="btn btn-primary" id="ruleAddBtn">Thêm rule</button>
+        </div>
+        <table class="data-table" id="rulesTable">
+          <thead><tr><th>ID</th><th>Hash</th><th>Publisher</th><th>Đường dẫn</th><th>Action</th><th>Scope</th><th>Tạo bởi</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ================= DOWNLOADS (UI-06) ================= -->
+    <section class="view" id="view-downloads">
+      <header class="view-header">
+        <h1>Cảnh báo file tải về</h1>
+        <p class="muted">File Suspicious trong Downloads cần bạn quyết định</p>
+      </header>
+      <div class="card glass">
+        <ul class="pending-list" id="downloadsList"></ul>
+        <p class="empty-hint" id="downloadsEmpty">Không có cảnh báo nào đang chờ.</p>
+      </div>
+    </section>
+
+    <!-- ================= AUDIT (UI-07) ================= -->
+    <section class="view" id="view-audit">
+      <header class="view-header">
+        <h1>Nhật ký hoạt động</h1>
+        <p class="muted">Bản tóm tắt diễn giải lại từ audit trail kỹ thuật</p>
+      </header>
+      <div class="card glass">
+        <div class="row-input" style="align-items:center">
+          <span class="muted small" id="auditFileSize" style="flex:1">—</span>
+          <button class="btn btn-ghost btn-sm" id="auditPruneBtn">Dọn log cũ (giữ 20.000 dòng gần nhất)</button>
+          <button class="btn btn-danger btn-sm" id="auditClearBtn">Xoá toàn bộ nhật ký</button>
+        </div>
+        <ul class="audit-list" id="auditList"></ul>
+      </div>
+    </section>
+
+    <!-- ================= UPDATE (UI-08) ================= -->
+    <section class="view" id="view-update">
+      <header class="view-header">
+        <h1>Cập nhật CSDL virus</h1>
+        <p class="muted">Kiểm tra và áp dụng bản cập nhật signature mới nhất</p>
+      </header>
+      <div class="card glass">
+        <p class="muted small" style="line-height:1.6">
+          CSDL (cơ sở dữ liệu) virus là danh sách "dấu vân tay" (hash SHA-256) của các file mã độc đã biết — công cụ đối chiếu file trên máy với danh sách này khi quét. Danh sách được cập nhật định kỳ (mặc định kiểm tra mỗi 2 giờ, tự động) để nhận diện được mã độc mới. <b>Mỗi lần CSDL đổi phiên bản (kể cả bản vá nhỏ) sẽ tự xoá cache full scan</b> để đảm bảo không bỏ sót file mà bản mới vừa nhận diện được.
+        </p>
+        <div class="meta-row"><span>Phiên bản hiện tại</span><b id="updCurrentVersion">v0</b></div>
+        <div class="meta-row"><span>Lần kiểm tra gần nhất</span><b id="updLastChecked">—</b></div>
+        <div class="meta-row"><span>Kết quả gần nhất</span><b id="updLastResult">—</b></div>
+        <button class="btn btn-primary" id="updCheckBtn">Kiểm tra ngay</button>
+        <p class="muted small" style="margin-top:8px">Nút trên: bắt buộc service kiểm tra và tải bản mới ngay lập tức, không cần đợi tới chu kỳ 2 giờ tiếp theo.</p>
+      </div>
+
+      <div class="card glass">
+        <div class="card-head"><h3>🎣 Danh sách domain/IP phishing</h3><span class="muted small" id="phishStatsMeta"></span></div>
+        <p class="muted small">Danh sách domain/IP lừa đảo đã biết, dùng cho tính năng kiểm tra URL (mục Nâng cao) và extension trình duyệt — cập nhật riêng, độc lập với CSDL virus ở trên vì thay đổi nhanh hơn nhiều (vài giờ tới vài ngày).</p>
+        <button class="btn btn-primary" id="phishUpdateBtn">Cập nhật danh sách ngay</button>
+      </div>
+    </section>
+
+    <!-- ================= FIREWALL (EXT-FW) ================= -->
+    <section class="view" id="view-firewall">
+      <header class="view-header">
+        <h1>Firewall theo tiến trình</h1>
+        <p class="muted">Rule engine user-mode + phát hiện C2 beacon qua độ đều đặn kết nối/entropy tên miền</p>
+      </header>
+
+      <div class="card glass">
+        <div class="card-head"><h3>Thêm rule</h3></div>
+        <div class="row-input wrap">
+          <input type="text" id="fwSha256" placeholder="SHA-256 ứng dụng">
+          <select id="fwDirection"><option value="Outbound">Outbound</option><option value="Inbound">Inbound</option></select>
+          <select id="fwProtocol"><option value="Any">Any</option><option value="Tcp">TCP</option><option value="Udp">UDP</option></select>
+          <input type="text" id="fwPortStart" placeholder="Port từ (tuỳ chọn)">
+          <input type="text" id="fwPortEnd" placeholder="Port đến (tuỳ chọn)">
+          <select id="fwAction"><option value="Allow">Allow</option><option value="Block">Block</option></select>
+          <input type="text" id="fwPriority" placeholder="Priority" value="100">
+          <button class="btn btn-primary" id="fwAddBtn">Thêm rule</button>
+        </div>
+        <table class="data-table" id="fwRulesTable">
+          <thead><tr><th>ID</th><th>App SHA-256</th><th>Chiều</th><th>Giao thức</th><th>Port</th><th>Action</th><th>Priority</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="card glass">
+        <div class="card-head"><h3>⚠ Nghi ngờ C2 beacon</h3><span class="muted small">Độ đều đặn khoảng cách kết nối (coefficient of variation) + entropy tên miền — CHỈ cảnh báo, không tự chặn</span></div>
+        <ul class="audit-list" id="beaconList"></ul>
+        <p class="empty-hint" id="beaconEmpty">Chưa phát hiện kết nối đáng ngờ.</p>
+      </div>
+    </section>
+
+    <!-- ================= RANSOMWARE (EXT-RW) ================= -->
+    <section class="view" id="view-ransomware">
+      <header class="view-header">
+        <h1>Chống Ransomware</h1>
+        <p class="muted">Giám sát 3 tín hiệu đồng thời (tốc độ ghi, entropy, đổi hàng loạt đuôi file) + tự động rollback</p>
+      </header>
+
+      <div class="card glass">
+        <div class="card-head"><h3>❔ Cơ chế backup hoạt động thế nào</h3></div>
+        <p class="muted small" style="line-height:1.6">
+          Đây <b>không phải</b> backup toàn bộ máy — chỉ chụp bản sao (snapshot) từng file riêng lẻ trong 3 thư mục bên dưới, tối đa 3 phiên bản gần nhất mỗi file, lưu trong thư mục quarantine-store riêng (không phải backup cloud).
+          Snapshot được chụp: (1) một lần lúc service khởi động cho các file đã có sẵn, và (2) mỗi khi phát hiện file đó vừa bị ghi/đổi tên (qua theo dõi thư mục thời gian thực).<br><br>
+          <b>Chạy skill/app khác có ảnh hưởng không?</b> Nếu app/skill đó chỉ ghi vài file trong 3 thư mục này, hệ thống chỉ âm thầm chụp thêm snapshot — <b>không có cảnh báo nào nổi lên</b> (mức "THEO DÕI"/tín hiệu thấp không hiện trừ khi bấm xem). Cảnh báo mức CRIT + tự động rollback <b>chỉ</b> xảy ra khi CẢ BA tín hiệu cùng lúc trong 20 giây: ghi/đổi tên ≥15 file khác nhau, entropy nội dung tăng vọt trên nhiều file, VÀ phần lớn đổi sang cùng một đuôi lạ — hành vi ghi file thông thường của app/skill hầu như không bao giờ khớp cả ba cùng lúc.<br><br>
+          <b>Hạn chế thật cần biết:</b> cơ chế hiện tại (theo dõi thư mục ở tầng user-mode, không phải driver kernel) <b>không xác định được PID</b> của tiến trình vừa ghi — nên khi có cảnh báo, hệ thống không thể nói chính xác "do virus" hay "do ông đang chạy gì đó", chỉ biết CÁI GÌ đã bị ghi và có khớp mẫu ransomware hay không. Nếu thấy cảnh báo đúng lúc đang chạy skill/app khác, cứ kiểm tra qua Version store bên dưới — dữ liệu gốc vẫn còn nguyên do đã snapshot trước đó.
+        </p>
+      </div>
+
+      <div class="card glass">
+        <div class="card-head"><h3>Thư mục được bảo vệ</h3></div>
+        <div id="rwProtectedFolders" class="muted small"></div>
+      </div>
+
+      <div class="card glass">
+        <div class="card-head"><h3>Cảnh báo gần đây</h3></div>
+        <ul class="audit-list" id="rwAlertsList"></ul>
+        <p class="empty-hint" id="rwAlertsEmpty">Chưa có cảnh báo nào.</p>
+      </div>
+
+      <div class="card glass">
+        <div class="card-head"><h3>Version store (khôi phục thủ công)</h3><span class="muted small">Giữ tối đa 3 phiên bản gần nhất mỗi file</span></div>
+        <table class="data-table" id="rwVersionTable">
+          <thead><tr><th>File gốc</th><th>Thời điểm snapshot</th><th>Kích thước</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ================= USB (EXT-USB) ================= -->
+    <section class="view" id="view-usb">
+      <header class="view-header">
+        <h1>Kiểm soát thiết bị USB</h1>
+        <p class="muted">Chính sách allow/block theo VID/PID + tự động quét volume vừa gắn</p>
+      </header>
+
+      <div class="card glass">
+        <div class="card-head"><h3>Thêm rule VID/PID</h3></div>
+        <div class="row-input wrap">
+          <input type="text" id="usbVid" placeholder="Vendor ID (VID)">
+          <input type="text" id="usbPid" placeholder="Product ID (PID)">
+          <input type="text" id="usbSerial" placeholder="Serial (bỏ trống = áp cho mọi thiết bị cùng model)">
+          <select id="usbAction"><option value="Ask">Ask</option><option value="Allow">Allow</option><option value="Block">Block</option></select>
+          <label class="muted small" style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="usbAutoScan" checked> Auto-scan</label>
+          <button class="btn btn-primary" id="usbAddBtn">Thêm rule</button>
+        </div>
+        <table class="data-table" id="usbRulesTable">
+          <thead><tr><th>ID</th><th>VID</th><th>PID</th><th>Serial</th><th>Action</th><th>Auto-scan</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="card glass">
+        <div class="card-head"><h3>Thiết bị vừa cắm gần đây</h3></div>
+        <ul class="audit-list" id="usbArrivalsList"></ul>
+        <p class="empty-hint" id="usbArrivalsEmpty">Chưa phát hiện thiết bị USB nào.</p>
+      </div>
+    </section>
+
+    <!-- ================= VULNERABILITY SCAN (EXT-VULN) ================= -->
+    <section class="view" id="view-vuln">
+      <header class="view-header">
+        <h1>Lỗ hổng phần mềm &amp; driver lỗi thời</h1>
+        <p class="muted">Đối chiếu phần mềm/driver đã cài với bảng CVE mẫu (demo, không phải NVD sống)</p>
+      </header>
+
+      <div class="card glass">
+        <div class="card-head"><h3>Kết quả quét gần nhất</h3><span class="muted small" id="vulnMeta"></span></div>
+        <button class="btn btn-primary" id="vulnScanBtn">Quét ngay</button>
+        <table class="data-table" id="vulnTable" style="margin-top:14px">
+          <thead><tr><th>Phần mềm</th><th>Phiên bản cài</th><th>CVE (demo)</th><th>CVSS</th><th>Khuyến nghị</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <p class="empty-hint" id="vulnEmpty">Không phát hiện lỗ hổng nào trong bảng demo.</p>
+      </div>
+    </section>
+
+    <!-- ================= PRIVACY: WEBCAM/MIC (EXT-CAM) ================= -->
+    <section class="view" id="view-privacy">
+      <header class="view-header">
+        <h1>Bảo vệ Webcam &amp; Microphone</h1>
+        <p class="muted">Cảnh báo khi tiến trình chưa whitelist mở webcam/mic — không tự động chặn</p>
+      </header>
+
+      <div class="card glass">
+        <div class="card-head"><h3>Thêm vào whitelist</h3><span class="muted small">Đường dẫn .exe hoặc package family name (app UWP)</span></div>
+        <div class="row-input">
+          <input type="text" id="camWhitelistPath" placeholder="C:\Program Files\Zoom\Zoom.exe">
+          <button class="btn btn-primary" id="camWhitelistAddBtn">Thêm</button>
+        </div>
+        <table class="data-table" id="camWhitelistTable">
+          <thead><tr><th>ID</th><th>Định danh tiến trình</th><th>Thêm bởi</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="card glass">
+        <div class="card-head"><h3>Truy cập gần đây</h3></div>
+        <ul class="audit-list" id="camAccessList"></ul>
+        <p class="empty-hint" id="camAccessEmpty">Chưa ghi nhận truy cập webcam/mic nào.</p>
+      </div>
+    </section>
+
+    <!-- ================= HOME NETWORK (EXT-NET) ================= -->
+    <section class="view" id="view-network">
+      <header class="view-header">
+        <h1>Giám sát mạng gia đình</h1>
+        <p class="muted">Bảng ARP + lắng nghe mDNS/SSDP thụ động — chỉ mang tính thông tin, không tự chặn thiết bị</p>
+      </header>
+
+      <div class="card glass">
+        <table class="data-table" id="netDevicesTable">
+          <thead><tr><th>Thiết bị</th><th>IP</th><th>MAC</th><th>Hãng (OUI)</th><th>Nguồn phát hiện</th><th>Cổng mở</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <p class="empty-hint" id="netDevicesEmpty">Chưa phát hiện thiết bị nào trong mạng.</p>
+      </div>
+    </section>
+
+    <!-- ================= ALERT CENTER (EXT-EVT) ================= -->
+    <section class="view" id="view-alerts">
+      <header class="view-header">
+        <h1>Trung tâm cảnh báo</h1>
+        <p class="muted">Sự kiện hợp nhất từ mọi engine (scan/firewall/ransomware/USB/cloud-intel/home-network) qua Event Bus nội bộ</p>
+      </header>
+
+      <div class="card glass">
+        <ul class="audit-list" id="alertCenterList"></ul>
+        <p class="empty-hint" id="alertCenterEmpty">Không có cảnh báo nào đang mở.</p>
+      </div>
+    </section>
+
+    <!-- ================= ADVANCED / LAB (Cloud intel, Sandbox, Phishing, Scheduler) ================= -->
+    <section class="view" id="view-advanced">
+      <header class="view-header">
+        <h1>Nâng cao</h1>
+        <p class="muted">Công cụ kiểm tra thủ công cho các engine nội bộ — cloud reputation, sandbox scoring, phishing URL, task scheduler</p>
+      </header>
+
+      <div class="card glass">
+        <div class="card-head"><h3>☁ Cloud threat intelligence (mock local)</h3><span class="muted small">Tra cứu prevalence theo hash — mô phỏng, không có backend cloud thật</span></div>
+        <div class="row-input">
+          <input type="text" id="cloudHashInput" placeholder="SHA-256 hash">
+          <button class="btn btn-primary" id="cloudLookupBtn">Tra cứu</button>
+        </div>
+        <div id="cloudLookupResult" class="scan-result"></div>
+      </div>
+
+      <div class="card glass">
+        <div class="card-head"><h3>🧪 Sandbox verdict aggregator (demo)</h3><span class="muted small">Không có VM thật — nhập nhanh 1 kịch bản để xem cách tính điểm</span></div>
+        <div class="row-input wrap">
+          <button class="btn btn-ghost" data-sandbox-demo="injection">Kịch bản: Process injection</button>
+          <button class="btn btn-ghost" data-sandbox-demo="autorun">Kịch bản: Ghi registry autorun</button>
+          <button class="btn btn-ghost" data-sandbox-demo="network">Kịch bản: Network burst</button>
+          <button class="btn btn-ghost" data-sandbox-demo="benign">Kịch bản: Không có hành vi lạ</button>
+        </div>
+        <div id="sandboxResult" class="scan-result"></div>
+      </div>
+
+      <div class="card glass">
+        <div class="card-head"><h3>🎣 Kiểm tra URL phishing</h3><span class="muted small">Logic dùng chung với native messaging host của browser extension</span></div>
+        <div class="row-input">
+          <input type="text" id="phishUrlInput" placeholder="https://vi-du.com/trang">
+          <button class="btn btn-primary" id="phishCheckBtn">Kiểm tra</button>
+        </div>
+        <div id="phishCheckResult" class="scan-result"></div>
+      </div>
+
+      <div class="card glass">
+        <div class="card-head"><h3>⏱ Task scheduler nội bộ</h3><span class="muted small">Điều phối tác vụ nền theo resource_class + idle-gate</span></div>
+        <div class="meta-row"><span>Máy đang idle</span><b id="advSchedulerIdle" class="pill">—</b></div>
+        <table class="data-table" id="schedulerTable">
+          <thead><tr><th>Task ID</th><th>Resource class</th><th>Priority</th><th>Yêu cầu idle</th><th>Max duration</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ============ MODAL: hộp thoại xin quyền (SEC-02/03) ============ -->
+<div class="modal-backdrop" id="permissionModal">
+  <div class="modal glass">
+    <div class="modal-icon">⚠</div>
+    <h2>Ứng dụng cần được cấp quyền</h2>
+    <div class="modal-field"><span>Đường dẫn</span><code id="pmPath"></code></div>
+    <div class="modal-field"><span>Publisher</span><code id="pmPublisher"></code></div>
+    <div class="modal-field"><span>SHA-256 (rút gọn)</span><code id="pmHash"></code></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="pmBlock">Chặn</button>
+      <button class="btn btn-ghost" id="pmOnce">Chỉ lần này</button>
+      <button class="btn btn-primary" id="pmAllow" disabled>Cho phép luôn</button>
+    </div>
+    <p class="muted small modal-note">Nút "Cho phép luôn" tạm khoá 0.5s để chống tự động hoá (theo đúng thiết kế chống malware tự click).</p>
+  </div>
+</div>
+
+<!-- ============ MODAL: chi tiet file bi gan co trong luc/sau khi quet ============ -->
+<div class="modal-backdrop" id="flaggedDetailModal">
+  <div class="modal glass flagged-detail-modal">
+    <div class="modal-icon" id="fdIcon">⚠</div>
+    <h2 id="fdVerdict">Suspicious</h2>
+    <div class="modal-field"><span>Đường dẫn</span><code id="fdPath"></code></div>
+    <div class="modal-field"><span>Nguồn phát hiện</span><code id="fdStage"></code></div>
+    <div class="modal-field"><span>SHA-256</span><code id="fdHash"></code></div>
+    <div class="modal-field"><span>Thời điểm</span><code id="fdTime"></code></div>
+    <div class="modal-field" style="display:block">
+      <span>Lý do</span>
+      <p id="fdReason" class="fd-reason"></p>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="fdClose">Đóng</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast-stack" id="toastStack"></div>
+
+<script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,514 @@
+:root {
+  /* Bang mau tu tai lieu thiet ke UI futuristic — DA KIEM CONTRAST WCAG AA
+     (>=4.5:1 chu thuong, >=3:1 chu lon/icon tren nen chinh #0A0E17), khong
+     phai chon theo cam giac. Giu nguyen dung ma hex tai lieu dua ra thay vi
+     tu doi, vi doi mot chut cung co the lam mat ket qua kiem contrast da co. */
+  --bg-0: #0a0e17;      /* nen chinh */
+  --bg-1: #0d121e;
+  --bg-2: #121826;      /* nen panel */
+  --bg-panel-elevated: #1a2236; /* nen panel noi (modal) — mau/chu tren day phai kiem contrast RIENG, khong dung chung nguong voi nen chinh */
+  --panel: rgba(18, 24, 38, 0.65);      /* #121826 o alpha 65% — nguong glassmorphism da kiem chung, KHONG chinh tuy y */
+  --panel-border: rgba(0, 229, 255, 0.20);
+  --cyan: #00e5ff;      /* accent chinh — trung tinh/nhan manh */
+  --violet: #b14eff;    /* accent phu — trang tri/thuong hieu, KHONG dung cho chu quan trong tren panel noi (chi dat 4.1:1 o do, duoi nguong 4.5:1 chu thuong) */
+  --pink: #ff2da6;      /* accent vien — trang tri/glow, han che dung lam chu */
+  --text-hi: #eaf2ff;
+  --text-mid: #8fa3c4;
+  --text-dim: #5f7292;
+  --ok: #00ffa3;
+  --ok-badge-bg: #00c87f;
+  --warn: #ffd84d;
+  --warn-badge-bg: #c99a00;
+  /* [DOC QUYEN MAU DO] --danger CHI danh cho threat that (Malicious/CRIT) —
+     khong dung cho nut xoa/huy thong thuong, xem --error ben duoi. Day la
+     nguyen tac "doc quyen mau" tu tai lieu thiet ke: mot khi mau nay xuat
+     hien o dau khac ngoai threat that, phan xa "thay do la co van de" cua
+     nguoi dung bi pha vo. */
+  --danger: #ff4d6a;
+  --danger-badge-bg: #c4293f;
+  /* Mau rieng cho hanh dong/loi UI thong thuong (xoa rule, huy scan, loi
+     mang) — CO Y tach khoi --danger dung tinh than tai lieu ("loi mang, loi
+     luu cau hinh dung mot tong cam-do khac biet ro"). */
+  --error: #ff8a4d;
+  --radius: 16px;
+  /* Theo yeu cau nguoi dung: toan bo app dung Times New Roman 18px — giu
+     nguyen, KHONG doi sang monospace nhu tai lieu thiet ke goi y cho
+     so lieu/log (nguoi dung da xac nhan uu tien Times New Roman). */
+  --font: "Times New Roman", Times, serif;
+}
+
+/* [CHE DO GIAM HIEU UNG] Tuong duong web cua UISettings.AnimationsEnabled
+   (WinUI3) ma tai lieu thiet ke de cap — CSS media query nay TU DONG cap
+   nhat khi nguoi dung doi cai dat he thong, khong can code JS lang nghe
+   rieng. Chi tat animation TRANG TRI THUAN TUY (spin logo...), KHONG dung
+   de an mau/trang thai — moi thong tin quyet dinh (risk score, verdict)
+   van hien day du dang tinh du animation co bat hay khong. */
+@media (prefers-reduced-motion: reduce) {
+  .brand-ring { animation: none; }
+  .view { animation: none; }
+  .toast { animation: none; }
+  .ring-progress { transition: none; }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--bg-0);
+  color: var(--text-hi);
+  font-family: var(--font);
+}
+
+body {
+  background:
+    radial-gradient(1100px 700px at 85% -10%, rgba(177, 78, 255, 0.20), transparent 60%),
+    radial-gradient(900px 600px at -10% 20%, rgba(0, 229, 255, 0.14), transparent 55%),
+    linear-gradient(180deg, var(--bg-0), var(--bg-1) 40%, var(--bg-0));
+  min-height: 100vh;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(120, 170, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(120, 170, 255, 0.045) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: radial-gradient(circle at 30% 10%, black, transparent 75%);
+  z-index: 0;
+}
+
+.app-shell {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  min-height: 100vh;
+}
+
+/* ---------------- Sidebar ---------------- */
+.sidebar {
+  border-right: 1px solid var(--panel-border);
+  background: rgba(8, 12, 22, 0.55);
+  backdrop-filter: blur(14px);
+  padding: 22px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.brand { display: flex; align-items: center; gap: 12px; padding: 0 4px; }
+
+.brand-mark { position: relative; width: 34px; height: 34px; flex-shrink: 0; }
+.brand-ring {
+  position: absolute; inset: 0; border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: var(--cyan);
+  border-right-color: var(--violet);
+  animation: spin 3.5s linear infinite;
+}
+.brand-core {
+  position: absolute; inset: 8px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, var(--cyan), var(--violet));
+  box-shadow: 0 0 14px rgba(0, 229, 255, 0.7);
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.brand-text { display: flex; flex-direction: column; line-height: 1.15; }
+.brand-text strong { font-size: 16px; letter-spacing: 0.5px; }
+.brand-text .accent { color: var(--cyan); }
+.brand-text small { color: var(--text-dim); font-size: 13px; }
+
+.nav { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+
+.nav-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px; border-radius: 10px;
+  background: transparent; border: 1px solid transparent;
+  color: var(--text-mid); font-size: 15px; font-family: inherit;
+  cursor: pointer; text-align: left; transition: all .15s ease;
+}
+.nav-item svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; flex-shrink: 0; }
+.nav-item:hover { background: rgba(120, 170, 255, 0.08); color: var(--text-hi); }
+.nav-item.active {
+  background: linear-gradient(90deg, rgba(0, 229, 255,0.14), rgba(177, 78, 255,0.10));
+  border-color: rgba(0, 229, 255, 0.35);
+  color: var(--text-hi);
+  box-shadow: 0 0 18px rgba(0, 229, 255, 0.10) inset;
+}
+
+.nav-section-label {
+  margin: 10px 4px 0; padding-top: 10px; border-top: 1px solid var(--panel-border);
+  font-size: 12.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px;
+  color: var(--text-dim);
+}
+
+.sidebar-footer {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13.5px; color: var(--text-dim);
+  padding: 8px 4px 0; border-top: 1px solid var(--panel-border);
+}
+.conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); flex-shrink: 0; }
+.conn-dot.ok { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+.conn-dot.bad { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+
+/* ---------------- Main ---------------- */
+.main { padding: 30px 40px 60px; max-width: 1180px; }
+
+.view { display: none; animation: fadeIn .25s ease; }
+.view.active { display: block; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+.view-header { margin-bottom: 22px; }
+.view-header h1 { margin: 0 0 4px; font-size: 22px; font-weight: 650; letter-spacing: .2px; }
+.muted { color: var(--text-mid); margin: 0; font-size: 15px; }
+.muted.small { font-size: 13.5px; color: var(--text-dim); }
+
+.card.glass {
+  /* Nguong glassmorphism da kiem chung (nen 65%, blur 24px, vien 20-35%) —
+     xem giai thich nguong nay o :root, khong tuy tien doi tung so. */
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  backdrop-filter: blur(24px);
+  padding: 22px;
+  margin-bottom: 20px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+}
+
+.card-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 14px; }
+.card-head h3 { margin: 0; font-size: 16px; font-weight: 600; }
+
+.grid { display: grid; gap: 20px; }
+.grid-top { grid-template-columns: 300px 1fr; align-items: stretch; }
+.grid-4 { grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); margin-top: 18px; }
+
+/* ---------------- Toggle switch (bat/tat cache full scan) ---------------- */
+.toggle-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 14px; margin-bottom: 14px; border-radius: 12px;
+  background: rgba(120,170,255,0.04); border: 1px solid var(--panel-border);
+}
+.toggle-row .tr-label { font-size: 14.5px; }
+.toggle-row .tr-desc { font-size: 13.5px; color: var(--text-dim); margin-top: 2px; }
+.toggle-switch {
+  position: relative; width: 44px; height: 24px; flex-shrink: 0;
+  border-radius: 999px; border: none; cursor: pointer;
+  background: rgba(120,170,255,0.18); transition: background .2s;
+}
+.toggle-switch::after {
+  content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px;
+  border-radius: 50%; background: var(--text-mid); transition: transform .2s, background .2s;
+}
+.toggle-switch.on { background: linear-gradient(90deg, var(--cyan), var(--violet)); }
+.toggle-switch.on::after { transform: translateX(20px); background: #06101f; }
+
+/* ---------------- Status ring (UI-01) ---------------- */
+.status-card { display: flex; flex-direction: column; align-items: center; gap: 18px; }
+.ring-wrap { position: relative; width: 150px; height: 150px; }
+.ring { width: 100%; height: 100%; transform: rotate(-90deg); }
+.ring-track { fill: none; stroke: rgba(120,170,255,0.12); stroke-width: 8; }
+.ring-progress {
+  fill: none; stroke: var(--cyan); stroke-width: 8; stroke-linecap: round;
+  stroke-dasharray: 326.7; stroke-dashoffset: 20;
+  filter: drop-shadow(0 0 8px rgba(0, 229, 255,0.7));
+  transition: stroke-dashoffset .6s ease, stroke .3s ease;
+}
+.ring-center {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+}
+.ring-icon { font-size: 26px; }
+.ring-center strong { font-size: 14.5px; }
+.ring-progress.risk-safe { stroke: var(--ok); filter: drop-shadow(0 0 8px rgba(0,255,163,0.7)); }
+.ring-progress.risk-warn { stroke: var(--warn); filter: drop-shadow(0 0 8px rgba(255,216,77,0.7)); }
+.ring-progress.risk-danger { stroke: var(--danger); filter: drop-shadow(0 0 8px rgba(255,77,106,0.7)); }
+
+.sev-badge { font-size: 12.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px; flex-shrink: 0; }
+.sev-low { background: rgba(120,170,255,0.14); color: var(--text-mid); }
+.sev-med { background: rgba(255,216,77,0.16); color: var(--warn); }
+.sev-high { background: rgba(255,77,106,0.18); color: var(--danger); }
+
+.status-meta { width: 100%; display: flex; flex-direction: column; gap: 10px; }
+.meta-row { display: flex; align-items: center; justify-content: space-between; font-size: 14.5px; color: var(--text-mid); }
+
+.pill { font-size: 13px; padding: 3px 9px; border-radius: 999px; font-weight: 600; letter-spacing: .3px; }
+.pill-ok { background: rgba(0, 255, 163, 0.14); color: var(--ok); border: 1px solid rgba(0,255,163,0.3); }
+.pill-warn { background: rgba(255, 216, 77, 0.14); color: var(--warn); border: 1px solid rgba(255,216,77,0.3); }
+/* pill-danger: CHI dung cho trang thai gan lien voi threat/block that
+   (vi du rule Block, quarantine PendingManualConfirmation) — xem [DOC
+   QUYEN MAU DO] o :root. */
+.pill-danger { background: rgba(255, 77, 106, 0.14); color: var(--danger); border: 1px solid rgba(255,77,106,0.3); }
+.pill-error { background: rgba(255, 138, 77, 0.14); color: var(--error); border: 1px solid rgba(255,138,77,0.3); }
+
+.stat-block { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-content: center; }
+.stat { text-align: left; }
+.stat-num { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stat-num.danger { color: var(--danger); }
+.stat-num.warn { color: var(--warn); }
+.stat-label { font-size: 13.5px; color: var(--text-dim); margin-top: 2px; }
+
+/* ---------------- Inputs / buttons ---------------- */
+.row-input { display: flex; gap: 10px; margin-bottom: 16px; }
+.row-input.wrap { flex-wrap: wrap; }
+
+input[type=text], select {
+  background: rgba(6, 10, 20, 0.6);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: var(--text-hi);
+  font-family: inherit;
+  font-size: 14.5px;
+  outline: none;
+  flex: 1;
+  min-width: 140px;
+  transition: border-color .15s;
+}
+input[type=text]:focus, select:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(0, 229, 255,0.12); }
+
+.btn {
+  border-radius: 10px; padding: 10px 18px; font-size: 14.5px; font-weight: 600;
+  font-family: inherit; cursor: pointer; border: 1px solid transparent; transition: all .15s;
+  white-space: nowrap;
+}
+.btn-primary {
+  background: linear-gradient(135deg, var(--cyan), var(--violet));
+  color: #06101f; box-shadow: 0 6px 18px rgba(0, 229, 255,0.25);
+}
+.btn-primary:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.btn-primary:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+.btn-ghost {
+  background: rgba(120,170,255,0.08); color: var(--text-hi); border-color: var(--panel-border);
+}
+.btn-ghost:hover { background: rgba(120,170,255,0.16); }
+/* [DOC QUYEN MAU DO] Nut "Xoa"/"Huy" thong thuong dung --error (cam), KHONG
+   dung --danger (do) — do la mau doc quyen cho threat that, dung o day se
+   lam nhat gia tri canh bao that su cua no. */
+.btn-danger { background: rgba(255,138,77,0.12); color: var(--error); border-color: rgba(255,138,77,0.3); }
+.btn-danger:hover { background: rgba(255,138,77,0.22); }
+.btn-sm { padding: 6px 12px; font-size: 13.5px; }
+
+.scan-result { margin-top: 12px; font-size: 14.5px; }
+.scan-result .verdict { font-weight: 700; padding: 2px 10px; border-radius: 8px; margin-right: 8px; }
+.verdict-clean { background: rgba(0,255,163,0.15); color: var(--ok); }
+.verdict-malicious { background: rgba(255,77,106,0.18); color: var(--danger); }
+.verdict-suspicious { background: rgba(255,216,77,0.18); color: var(--warn); }
+.verdict-scanerror { background: rgba(120,170,255,0.15); color: var(--text-mid); }
+
+/* ---------------- Progress (UI-02) ---------------- */
+.progress-wrap { margin: 6px 0 8px; }
+.progress-bar { height: 10px; border-radius: 999px; background: rgba(120,170,255,0.1); overflow: hidden; }
+.progress-fill {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, var(--cyan), var(--violet));
+  box-shadow: 0 0 10px rgba(0, 229, 255,0.6);
+  transition: width .4s ease;
+}
+.progress-meta { display: flex; justify-content: space-between; margin-top: 8px; font-size: 14px; }
+
+/* ---------------- Tables ---------------- */
+.data-table { width: 100%; border-collapse: collapse; font-size: 14.5px; margin-top: 6px; }
+.data-table th {
+  text-align: left; color: var(--text-dim); font-weight: 600; font-size: 13.5px;
+  text-transform: uppercase; letter-spacing: .5px; padding: 8px 10px; border-bottom: 1px solid var(--panel-border);
+}
+.data-table td { padding: 10px; border-bottom: 1px solid rgba(120,170,255,0.07); vertical-align: middle; }
+.data-table tr:hover td { background: rgba(120,170,255,0.04); }
+.mono { font-family: var(--font); font-size: 13.5px; color: var(--text-mid); }
+.empty-hint { color: var(--text-dim); font-size: 14.5px; text-align: center; padding: 18px 0 4px; }
+
+/* ---------------- Bo loc danh sach file bi gan co ---------------- */
+.filter-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.filter-chip {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 12px; border-radius: 999px;
+  background: rgba(120,170,255,0.06); border: 1px solid var(--panel-border);
+  color: var(--text-mid); font-size: 14px; font-family: inherit; cursor: pointer;
+  transition: all .15s;
+}
+.filter-chip:hover { background: rgba(120,170,255,0.12); color: var(--text-hi); }
+.filter-chip.active {
+  background: linear-gradient(90deg, rgba(0, 229, 255,0.18), rgba(177, 78, 255,0.14));
+  border-color: var(--cyan); color: var(--text-hi);
+}
+.filter-chip .fc-count {
+  background: rgba(0,0,0,0.25); border-radius: 999px; padding: 1px 8px;
+  font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+
+.error-breakdown {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px; margin-bottom: 16px;
+}
+.error-breakdown .eb-item {
+  padding: 10px 12px; border-radius: 10px;
+  background: rgba(120,170,255,0.05); border: 1px solid var(--panel-border);
+}
+.error-breakdown .eb-code { font-size: 13px; font-weight: 700; color: var(--cyan); text-transform: uppercase; letter-spacing: .4px; }
+.error-breakdown .eb-count { font-size: 20px; font-weight: 700; margin: 2px 0; }
+.error-breakdown .eb-desc { font-size: 13.5px; color: var(--text-dim); line-height: 1.4; }
+
+/* ---------------- Bao cao cuoi scan ---------------- */
+.report-summary {
+  font-family: "Times New Roman", Times, serif;
+  font-size: 18px;
+  line-height: 1.6;
+  color: var(--text-hi);
+  white-space: pre-line;
+  margin: 0;
+}
+
+/* ---------------- Danh sach file bi gan co (click de xem chi tiet) ----------------
+   Theo yeu cau nguoi dung: font Times New Roman 18px cho khu vuc nay. */
+.flagged-list {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 8px;
+  font-family: "Times New Roman", Times, serif;
+  font-size: 18px;
+}
+.flagged-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 10px 14px; border-radius: 10px;
+  background: rgba(120,170,255,0.05);
+  border: 1px solid var(--panel-border);
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.flagged-item:hover { background: rgba(120,170,255,0.1); border-color: var(--cyan); }
+.flagged-item.malicious { border-left: 3px solid var(--danger); }
+.flagged-item.suspicious { border-left: 3px solid var(--warn); }
+.flagged-item.scanerror { border-left: 3px solid var(--text-dim); }
+/* [SUA LOI NGHIEM TRONG] "min-width: 0" la BAT BUOC de flex item co the co
+   lai NHO HON kich thuoc noi dung cua no (mac dinh flex item co
+   min-width:auto, khien text-overflow:ellipsis KHONG BAO GIO kich hoat va
+   duong dan dai tran ngang man hinh) — day chinh la nguyen nhan ten file
+   dai lam vo layout ma nguoi dung bao cao. */
+.flagged-item .fi-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flagged-item .fi-path .fp-dir { color: var(--text-dim); }
+.flagged-item .fi-time { color: var(--text-dim); font-size: 15px; flex-shrink: 0; }
+
+.fd-reason {
+  font-family: "Times New Roman", Times, serif;
+  font-size: 18px;
+  color: var(--text-hi);
+  text-align: left;
+  margin: 4px 0 0;
+  line-height: 1.5;
+}
+.flagged-detail-modal { width: 480px; }
+
+/* ---------------- Thong ke hoat dong (dashboard, UI-01 mo rong) ---------------- */
+.activity-stats {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px; margin-bottom: 18px;
+}
+.as-tile {
+  position: relative; overflow: hidden;
+  padding: 14px 14px 12px; border-radius: 14px;
+  background: rgba(120,170,255,0.05); border: 1px solid var(--panel-border);
+  transition: transform .15s, border-color .15s;
+}
+.as-tile:hover { transform: translateY(-2px); border-color: var(--as-color, var(--cyan)); }
+.as-tile::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 3px;
+  background: var(--as-color, var(--cyan));
+  box-shadow: 0 0 12px var(--as-color, var(--cyan));
+}
+.as-icon { font-size: 20px; margin-bottom: 6px; display: block; }
+.as-count { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text-hi); }
+.as-label { font-size: 13px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .5px; margin-top: 2px; }
+
+/* ---------------- Lists (downloads / audit) ---------------- */
+.pending-list, .audit-list, .mini-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+
+.pending-list li {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 14px; border-radius: 12px; background: rgba(255,216,77,0.06); border: 1px solid rgba(255,216,77,0.22);
+}
+.pending-info { display: flex; flex-direction: column; gap: 3px; }
+.pending-info .path { font-size: 14.5px; font-weight: 600; }
+.pending-actions { display: flex; gap: 8px; }
+
+/* ---------------- Dang terminal log — tu tai lieu thiet ke UI futuristic:
+   moi dong bat dau bang timestamp [HH:mm:ss] + nhan muc do [INFO]/[WARN]/
+   [CRIT], giup mat quet nhanh qua nhieu dong ma khong can doc het cau. Ap
+   dung cho Nhat ky, mini-log dashboard, va Trung tam canh bao/beacon/
+   ransomware/USB/webcam-mic — moi noi co danh sach su kien theo thoi gian.
+   Giu Times New Roman (khong doi sang monospace) theo yeu cau nguoi dung,
+   nhung tabular-nums giu timestamp thang hang khi cap nhat lien tuc. ---------------- */
+.audit-list li, .mini-log li {
+  display: flex; gap: 10px; align-items: baseline;
+  padding: 9px 6px; border-bottom: 1px solid rgba(120,170,255,0.06); font-size: 14.5px;
+  border-left: 2px solid transparent;
+}
+.audit-list li:last-child, .mini-log li:last-child { border-bottom: none; }
+.audit-time {
+  color: var(--text-dim); font-variant-numeric: tabular-nums; flex-shrink: 0; width: 82px;
+}
+.audit-time::before { content: "["; }
+.audit-time::after { content: "]"; }
+.audit-cat {
+  flex-shrink: 0; font-size: 12.5px; font-weight: 700; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 6px; background: rgba(120,170,255,0.1); color: var(--text-mid);
+}
+
+/* Nhan muc do dang [INFO]/[WARN]/[CRIT] — dung DUNG mau trang thai da dinh
+   (khong tao bien the rieng cho log), CRIT dung --danger DOC QUYEN va co
+   them vien trai + nen hoi sang de noi bat ngay ca khi log dang cuon nhanh
+   qua nhieu dong INFO/WARN lien tiep. */
+.log-level { flex-shrink: 0; font-size: 13.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.log-level::before { content: "["; }
+.log-level::after { content: "]"; }
+.log-level.log-info { color: var(--cyan); }
+.log-level.log-warn { color: var(--warn); }
+.log-level.log-crit { color: var(--danger); }
+li.log-row-crit { border-left-color: var(--danger); background: rgba(255,77,106,0.05); }
+
+/* ---------------- Modal (SEC-02/03) ---------------- */
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgba(3,5,10,0.72); backdrop-filter: blur(4px);
+  display: none; align-items: center; justify-content: center; z-index: 50;
+}
+.modal-backdrop.show { display: flex; }
+.modal {
+  width: 420px; padding: 28px; border-radius: 20px; text-align: center;
+  background: linear-gradient(180deg, rgba(24,32,54,0.95), rgba(14,19,34,0.95));
+  border: 1px solid rgba(255, 84, 112, 0.25);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 40px rgba(255,77,106,0.08);
+}
+.modal-icon { font-size: 30px; margin-bottom: 6px; }
+.modal h2 { margin: 0 0 18px; font-size: 17px; }
+.modal-field {
+  display: flex; justify-content: space-between; gap: 10px; text-align: left;
+  font-size: 14px; padding: 8px 0; border-bottom: 1px solid rgba(120,170,255,0.08);
+}
+.modal-field span { color: var(--text-dim); flex-shrink: 0; }
+.modal-field code { color: var(--text-hi); word-break: break-all; text-align: right; font-family: var(--font); }
+.modal-actions { display: flex; gap: 10px; margin-top: 20px; }
+.modal-actions .btn { flex: 1; }
+.modal-note { margin-top: 14px; }
+
+/* ---------------- Toasts (UI-06 notification) ---------------- */
+.toast-stack { position: fixed; right: 24px; bottom: 24px; display: flex; flex-direction: column; gap: 10px; z-index: 60; }
+.toast {
+  min-width: 260px; max-width: 340px; padding: 14px 16px; border-radius: 12px;
+  background: rgba(16,22,38,0.95); border: 1px solid var(--panel-border);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+  animation: toastIn .25s ease;
+  font-size: 14.5px;
+}
+.toast.danger { border-color: rgba(255,77,106,0.4); box-shadow: 0 0 24px rgba(255,77,106,0.15); }
+.toast.warn { border-color: rgba(255,216,77,0.4); }
+.toast b { display: block; margin-bottom: 4px; }
+@keyframes toastIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: none; } }
+
+@media (max-width: 900px) {
+  .app-shell { grid-template-columns: 1fr; }
+  .sidebar { position: sticky; top: 0; z-index: 10; flex-direction: row; align-items: center; overflow-x: auto; }
+  .nav { flex-direction: row; }
+  .grid-top { grid-template-columns: 1fr; }
+  .main { padding: 20px; }
+}

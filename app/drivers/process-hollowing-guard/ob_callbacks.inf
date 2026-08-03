@@ -1,0 +1,53 @@
+; ob_callbacks.inf — mau INF cho driver ObRegisterCallbacks (process
+; hollowing guard).
+; [HAN CHE MOI TRUONG] File nay la THAM KHAO CAU HINH, chua dung de dong
+; goi driver that trong phien nay (khong co WDK/EV Code Signing
+; Certificate — xem ops/README-known-limitations.md).
+
+[Version]
+Signature   = "$Windows NT$"
+Class       = "System"
+ClassGuid   = {4D36E97D-E325-11CE-BFC1-08002BE10318}
+Provider    = %ProviderString%
+DriverVer   = ; do build tool dien tu dong
+CatalogFile = ob_callbacks.cat
+PnpLockdown = 1
+
+[DestinationDirs]
+DefaultDestDir = 12
+
+[DefaultInstall]
+CopyFiles = ObGuard.DriverFiles
+
+[DefaultInstall.Services]
+AddService = %ServiceName%,0x00000002,ObGuard.Service
+
+[DefaultUninstall]
+DelFiles = ObGuard.DriverFiles
+
+[DefaultUninstall.Services]
+DelService = %ServiceName%,0x200
+
+[ObGuard.Service]
+DisplayName    = %ServiceName%
+Description    = %ServiceDescription%
+ServiceBinary  = %12%\%DriverName%.sys
+ServiceType    = 1     ; SERVICE_KERNEL_DRIVER
+StartType      = 3     ; SERVICE_DEMAND_START
+ErrorControl   = 1     ; SERVICE_ERROR_NORMAL
+
+[ObGuard.DriverFiles]
+%DriverName%.sys
+
+[SourceDisksFiles]
+ob_callbacks.sys = 1
+
+[SourceDisksNames]
+1 = %DiskId1%,,,
+
+[Strings]
+ProviderString     = "SmePlanAv"
+ServiceName        = "SmePlanAvObGuard"
+ServiceDescription = "SmePlanAv Process Hollowing Guard (ObRegisterCallbacks)"
+DriverName         = "ob_callbacks"
+DiskId1            = "SmePlanAv Process Guard Driver Installation Disk"

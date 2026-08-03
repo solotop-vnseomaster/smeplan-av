@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Antivirus.Service</RootNamespace>
+    <AssemblyName>Antivirus.Service</AssemblyName>
+    <UserSecretsId>antivirus-service</UserSecretsId>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <UseWindowsForms>false</UseWindowsForms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />
+    <PackageReference Include="System.Management" Version="9.0.0" />
+  </ItemGroup>
+
+  <!-- scan_engine.dll (C++) duoc build rieng qua app/engine/build.ps1;
+       copy vao thu muc output de P/Invoke tim thay luc chay. -->
+  <ItemGroup>
+    <None Include="..\..\engine\build\$(Configuration)\scan_engine.dll" Condition="Exists('..\..\engine\build\$(Configuration)\scan_engine.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>scan_engine.dll</Link>
+    </None>
+    <None Include="..\..\engine\build\Debug\scan_engine.dll" Condition="!Exists('..\..\engine\build\$(Configuration)\scan_engine.dll') AND Exists('..\..\engine\build\Debug\scan_engine.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>scan_engine.dll</Link>
+    </None>
+  </ItemGroup>
+
+</Project>

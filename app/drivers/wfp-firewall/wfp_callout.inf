@@ -1,0 +1,54 @@
+; wfp_callout.inf — mau INF cho WFP callout driver (khong phai FSFilter/ELAM
+; nen dung ClassGuid chuan cua driver he thong thong thuong).
+; [HAN CHE MOI TRUONG] File nay la THAM KHAO CAU HINH, chua dung de dong
+; goi driver that trong phien nay (khong co WDK/EV Code Signing
+; Certificate — xem ops/README-known-limitations.md).
+
+[Version]
+Signature   = "$Windows NT$"
+Class       = "System"
+ClassGuid   = {4D36E97D-E325-11CE-BFC1-08002BE10318}
+Provider    = %ProviderString%
+DriverVer   = ; do build tool dien tu dong
+CatalogFile = wfp_callout.cat
+PnpLockdown = 1
+
+[DestinationDirs]
+DefaultDestDir = 12
+
+[DefaultInstall]
+CopyFiles = WfpCallout.DriverFiles
+
+[DefaultInstall.Services]
+AddService = %ServiceName%,0x00000002,WfpCallout.Service
+
+[DefaultUninstall]
+DelFiles = WfpCallout.DriverFiles
+
+[DefaultUninstall.Services]
+DelService = %ServiceName%,0x200
+
+[WfpCallout.Service]
+DisplayName    = %ServiceName%
+Description    = %ServiceDescription%
+ServiceBinary  = %12%\%DriverName%.sys
+ServiceType    = 1     ; SERVICE_KERNEL_DRIVER
+StartType      = 3     ; SERVICE_DEMAND_START — nap khi service nen yeu cau,
+                       ; khac minifilter/ELAM vi khong can chan tu boot
+ErrorControl   = 1     ; SERVICE_ERROR_NORMAL
+
+[WfpCallout.DriverFiles]
+%DriverName%.sys
+
+[SourceDisksFiles]
+wfp_callout.sys = 1
+
+[SourceDisksNames]
+1 = %DiskId1%,,,
+
+[Strings]
+ProviderString     = "SmePlanAv"
+ServiceName        = "SmePlanAvFwCallout"
+ServiceDescription = "SmePlanAv Application Firewall (WFP callout)"
+DriverName         = "wfp_callout"
+DiskId1            = "SmePlanAv Firewall Driver Installation Disk"

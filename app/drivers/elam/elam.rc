@@ -1,0 +1,16 @@
+// elam.rc
+// [HAN CHE MOI TRUONG + GHI CHU DO TIN CAY KY THUAT — xem elam.h]
+//
+// Resource kieu "MSElamCertificateInfo" chua danh sach publisher/hash duoc
+// phan loai san — day la co che phan loai CHINH cua ELAM driver (xem
+// elam.h). Noi dung nhi phan cua resource nay PHAI duoc tao bang cong cu
+// chinh thuc cua Microsoft (khong phai tu viet tay) khi tham gia chuong
+// trinh doi tac ELAM — moi truong lam viec nay khong co quyen truy cap
+// chuong trinh doi tac do, nen file .bin duoi day la placeholder RONG,
+// KHONG phai du lieu chung nhan hop le.
+//
+// Khi co du lieu certificate that tu Microsoft Partner Center, thay
+// "elam_cert_info.bin.placeholder" bang file nhi phan that do cong cu cua
+// Microsoft tao ra.
+
+1 MSElamCertificateInfo "elam_cert_info.bin.placeholder"

@@ -1,0 +1,461 @@
+# Mở Rộng Antivirus: Firewall, Ransomware, Sandbox, Phishing
+
+Nối tiếp bài xây antivirus Windows trước, không lặp whitelist app gốc hay real-time protection, bài này đào sâu các lớp bảo vệ khác: firewall theo tiến trình bằng WFP, phát hiện và rollback ransomware, sandbox bằng lightweight VM, chặn phishing, kiểm soát USB, exploit protection, và cách gộp cảnh báo từ nhiều engine thành một thông báo duy nhất.
+
+## Kiến trúc tổng thể các lớp bảo vệ mở rộng
+
+Các lớp bảo vệ mở rộng trong bài này không thay thế mà cắm thêm vào đúng ba điểm neo đã có từ trước: service nền (điều phối, lưu rule, chạy scan engine), hệ thống nhận diện tiến trình tin cậy theo chữ ký số, và hạ tầng minifilter/callback đã đăng ký. Firewall lớp ứng dụng thêm một callout WFP mới song song với minifilter filesystem đã có, cùng gửi sự kiện về service qua kênh giao tiếp sẵn có thay vì mở kênh riêng. Anti-ransomware tái sử dụng chính minifilter filesystem đó, chỉ đăng ký thêm callback cho thao tác ghi/đổi tên thay vì chỉ mở file như real-time protection đang làm.
+
+Sandbox và exploit protection đứng ở một vị trí khác: chúng không chặn ngay tại điểm vào (file open, connection, USB insert) mà chạy như một bước xử lý bổ sung sau khi entity đã được đưa vào hàng đợi nghi ngờ, sandbox nhận file mà scan engine cũ trả về `Suspicious`, exploit protection giám sát hành vi runtime của tiến trình đã được cho phép chạy. Anti-phishing, kiểm soát USB, và giám sát mạng gia đình là ba module độc lập hơn, mỗi module có nguồn sự kiện riêng (browser extension, PnP notification, ARP scan) nhưng đều publish kết quả vào cùng một event bus nội bộ.
+
+Chính event bus này, cùng với bộ risk score tổng hợp, là hai thành phần kiến trúc mới quan trọng nhất của bài, được trình bày ở phần cuối, vì đây là nơi mọi module trên hội tụ lại thành một trải nghiệm cảnh báo duy nhất cho người dùng, không có nó, mỗi module mới thêm vào sẽ là một nguồn thông báo rời rạc, đúng vấn đề mà phần xử lý sự kiện trùng lặp giải quyết.
+
+## Firewall lớp ứng dụng bằng Windows Filtering Platform
+
+Mở engine lọc bằng `FwpmEngineOpen`, sau đó đăng ký một callout kernel-mode qua `FwpmCalloutAdd` gắn vào layer `FWPM_LAYER_ALE_AUTH_CONNECT_V4` cho kết nối outbound (hoặc `FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4` cho inbound), đây là các layer "Application Layer Enforcement", nơi WFP cho phép lọc theo điều kiện `FWPM_CONDITION_ALE_APP_ID`, tức chính đường dẫn file thực thi của tiến trình đang mở kết nối chứ không chỉ theo port hay địa chỉ IP.
+
+```c
+FWPM_FILTER_CONDITION0 conditions[1] = {0};
+conditions[0].fieldKey = FWPM_CONDITION_ALE_APP_ID;
+conditions[0].matchType = FWP_MATCH_EQUAL;
+conditions[0].conditionValue.type = FWP_BYTE_BLOB_TYPE;
+conditions[0].conditionValue.byteBlob = appIdBlob; // lấy qua FwpmGetAppIdFromFileName0
+
+FWPM_FILTER0 filter = {0};
+filter.layerKey = FWPM_LAYER_ALE_AUTH_CONNECT_V4;
+filter.action.type = FWP_ACTION_CALLOUT_TERMINATING;
+filter.action.calloutKey = MY_CALLOUT_GUID;
+filter.numFilterConditions = 1;
+filter.filterCondition = conditions;
+filter.subLayerKey = MY_SUBLAYER_GUID;
+
+FwpmFilterAdd0(engineHandle, &filter, NULL, NULL);
+```
+
+Callout thực thi (`classifyFn`) bắt buộc chạy trong kernel vì nó nằm trên đường xử lý gói tin của network stack, nhưng logic quyết định allow/block không cần đặt trong đó, callout chỉ trích xuất `appId`, gửi xuống service user-mode qua cùng filter communication port đã dùng cho real-time protection ở bài trước (tái sử dụng hạ tầng giao tiếp, không mở kênh riêng), service tra bảng rule (phần tiếp theo) rồi trả `FWP_ACTION_BLOCK` hoặc `FWP_ACTION_PERMIT` ngược lại cho callout hoàn tất quyết định.
+
+Vì mỗi kết nối mới đều phải chờ round-trip xuống service, áp dụng đúng kỹ thuật cache theo (đường dẫn tiến trình, cổng đích, giao thức) đã dùng cho real-time protection: nếu cùng tiến trình đã có quyết định gần đây cho cùng combination này, callout trả lời ngay từ cache trong kernel mà không cần hỏi lại service, tránh lặp lại vấn đề độ trễ round-trip cho mọi kết nối mới của cùng một ứng dụng đang chạy bình thường.
+
+## Thiết kế rule engine cho firewall
+
+Rule firewall cần nhiều chiều hơn rule phân quyền thực thi đã có (chỉ allow/block theo hash/publisher): thêm chiều hướng kết nối (inbound/outbound), cổng hoặc dải cổng, và giao thức. Schema mở rộng từ bảng rule cũ, thêm bảng riêng thay vì nhồi chung:
+
+```sql
+CREATE TABLE firewall_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    app_sha256 TEXT NOT NULL,
+    direction TEXT NOT NULL CHECK(direction IN ('inbound', 'outbound')),
+    protocol TEXT NOT NULL CHECK(protocol IN ('tcp', 'udp', 'any')),
+    remote_port_start INTEGER,
+    remote_port_end INTEGER,
+    action TEXT NOT NULL CHECK(action IN ('allow', 'block')),
+    priority INTEGER NOT NULL DEFAULT 100,
+    created_by TEXT NOT NULL
+);
+CREATE INDEX idx_fw_app ON firewall_rules(app_sha256, direction);
+```
+
+Cột `priority` giải quyết trường hợp hai rule cùng khớp một kết nối nhưng đưa ra hành động khác nhau, ví dụ rule mặc định "block mọi outbound không xác định" (priority thấp, áp cho toàn hệ thống) và rule người dùng tự thêm "allow ứng dụng X kết nối cổng 443" (priority cao hơn, chỉ áp cho một app cụ thể). Khi tra bảng, service luôn lấy rule có priority cao nhất trong số các rule khớp điều kiện, không dừng ở rule khớp đầu tiên tìm thấy.
+
+Rule mặc định hợp lý cho một firewall mới cài, tránh gây gián đoạn ngay từ đầu: outbound mặc định allow cho mọi tiến trình đã được whitelist theo chữ ký số (dùng lại whitelist từ bài trước), outbound mặc định hỏi người dùng (tương tự luồng hỏi quyền thực thi) cho tiến trình chưa rõ danh tính lần đầu kết nối mạng, và inbound mặc định block trừ khi có rule allow tường minh, bất đối xứng giữa inbound và outbound này phản ánh đúng rủi ro thực tế: kết nối inbound không mong muốn gần như luôn là dấu hiệu xấu, trong khi phần lớn phần mềm hợp lệ đều cần outbound để hoạt động bình thường.
+
+## Giám sát kết nối outbound đáng ngờ
+
+Rule engine ở phần trước xử lý đúng trường hợp người dùng hoặc chính sách mặc định đã biết trước nên chặn ai, nhưng C2 beacon (kết nối định kỳ về máy chủ điều khiển của kẻ tấn công) thường phát ra từ một tiến trình đã được allow từ trước (do bị chèn vào một tiến trình hợp lệ, hoặc bản thân binary đã qua được whitelist ban đầu). Phát hiện beacon vì vậy không dựa vào rule tĩnh mà dựa vào pattern lưu lượng theo thời gian.
+
+Hai chỉ số cụ thể, tính trên cửa sổ trượt theo tiến trình: (1) độ đều đặn của khoảng cách giữa các lần kết nối tới cùng một địa chỉ đích, beacon thường kết nối theo chu kỳ gần như cố định (ví dụ mỗi 60±5 giây), tính độ lệch chuẩn của khoảng cách thời gian giữa các lần kết nối liên tiếp, độ lệch chuẩn thấp bất thường so với traffic người dùng thông thường (vốn ngẫu nhiên hơn nhiều) là tín hiệu đáng chú ý; (2) domain generation algorithm (DGA), kiểm tra domain đích có đặc điểm của tên miền sinh tự động hay không, dựa trên entropy của chuỗi tên miền (tên miền do DGA sinh ra thường có entropy ký tự cao hơn tên miền do người đặt) kết hợp tỷ lệ nguyên âm/phụ âm bất thường so với ngôn ngữ tự nhiên.
+
+```c
+double ComputeIntervalRegularity(uint64_t* timestamps, int count) {
+    if (count < 5) return 0.0; // chưa đủ dữ liệu để kết luận
+    double intervals[MAX_SAMPLES];
+    for (int i = 1; i < count; i++)
+        intervals[i-1] = (double)(timestamps[i] - timestamps[i-1]);
+    double mean = ComputeMean(intervals, count - 1);
+    double stddev = ComputeStdDev(intervals, count - 1, mean);
+    return stddev / mean; // hệ số biến thiên thấp = đều đặn bất thường
+}
+```
+
+Cả hai chỉ số đều chỉ nâng mức nghi ngờ (`Suspicious`), không tự động block ngay, beacon thật cũng có thể trùng pattern với phần mềm hợp lệ có nhịp đồng bộ định kỳ (ứng dụng kiểm tra cập nhật, đồng bộ cloud). Kết quả nghi ngờ được publish vào event bus kèm mức severity trung bình, để bộ gộp cảnh báo ở phần cuối bài quyết định có kết hợp với tín hiệu từ engine khác (ví dụ tiến trình đó cũng bị scan engine gắn cờ `Suspicious` trước đó) để nâng mức cảnh báo lên hay không, thay vì mỗi engine tự ý chặn dựa trên tín hiệu một mình nó có.
+
+## Phát hiện hành vi ransomware đang mã hóa hàng loạt file
+
+Không dùng một chỉ số đơn lẻ để kết luận ransomware, phần mềm backup, công cụ encode video, hay client đồng bộ cloud đều ghi/đổi tên nhiều file liên tiếp trong thời gian ngắn, giống bề ngoài với hành vi mã hóa hàng loạt. Ba tín hiệu sau, đo trong cùng một cửa sổ thời gian ngắn (10-30 giây) và theo cùng một tiến trình, cần xuất hiện đồng thời trước khi coi là ransomware:
+
+- **Tốc độ ghi/đổi tên file vượt ngưỡng bất thường so với baseline của chính máy đó**, không dùng một con số cố định toàn cầu, vì máy có ổ SSD nhanh và máy có HDD chậm có baseline hoàn toàn khác nhau; tính baseline bằng cách quan sát tốc độ ghi trung bình của các tiến trình phổ biến trên chính máy đó trong vài ngày đầu sau khi cài app.
+- **Entropy nội dung file tăng vọt so với entropy trước khi bị ghi đè**, đo bằng cách lưu entropy của một mẫu nhỏ đầu file (không cần đọc toàn bộ) trước khi cho phép ghi, so sánh với entropy sau khi ghi xong; mã hóa luôn đẩy entropy tiệm cận 8 bit/byte, khác với nén (entropy cũng tăng nhưng theo phân bố khác) hay ghi dữ liệu văn bản thông thường.
+- **Phần mở rộng file bị đổi hàng loạt sang cùng một đuôi lạ**, ví dụ hàng trăm file `.docx`, `.jpg` khác nhau đều bị đổi thành cùng đuôi `.locked` trong vài giây, một pattern gần như không xuất hiện ở phần mềm hợp lệ.
+
+Chỉ khi cả ba tín hiệu cùng đúng, engine mới nâng mức cảnh báo lên hành động chặn tự động tiến trình đó; nếu chỉ một hoặc hai tín hiệu xuất hiện, hạ xuống mức theo dõi thêm và publish vào event bus ở mức severity thấp hơn thay vì chặn ngay. Yếu tố thứ tư, mang tính danh tính chứ không phải hành vi, cần cộng thêm vào: nếu tiến trình đã nằm trong whitelist theo chữ ký số đã xây ở bài trước, nâng ngưỡng của cả ba tín hiệu trên lên rất cao trước khi coi là ransomware, đây là giới hạn thật cần thừa nhận thẳng thắn, vì hành vi thuần túy không đủ để phân biệt tuyệt đối phần mềm mã hóa hợp lệ (ví dụ công cụ mã hóa ổ đĩa cá nhân) với ransomware, và whitelist danh tính là lớp bù đắp cho giới hạn đó, không phải giải pháp độc lập.
+
+## Bảo vệ thư mục quan trọng khỏi ghi bởi tiến trình lạ
+
+Minifilter đã đăng ký cho real-time protection ở bài trước hook `IRP_MJ_CREATE` để chặn mở file, cơ chế bảo vệ thư mục quan trọng ở đây đăng ký thêm callback cho `IRP_MJ_WRITE` và `IRP_MJ_SET_INFORMATION` (thao tác rename dùng chung major function này với flag `FileRenameInformation`), chỉ áp dụng cho các đường dẫn nằm trong danh sách thư mục người dùng đã chỉ định là quan trọng (mặc định gợi ý Documents, Pictures, Desktop, để trống cho người dùng tự thêm), không áp cho toàn bộ ổ đĩa, tương tự cách Controlled Folder Access của Windows Defender giới hạn phạm vi bảo vệ.
+
+```c
+FLT_PREOP_CALLBACK_STATUS PreWriteCallback(
+    PFLT_CALLBACK_DATA Data, PCFLT_RELATED_OBJECTS FltObjects, PVOID* CompletionContext) {
+
+    if (!IsInProtectedFolderList(FltObjects->FileObject)) {
+        return FLT_PREOP_SUCCESS_NO_CALLBACK; // ngoài phạm vi bảo vệ, không can thiệp
+    }
+
+    if (IsProcessWhitelistedForWrite(PsGetCurrentProcessId())) {
+        return FLT_PREOP_SUCCESS_NO_CALLBACK; // Explorer, ứng dụng Office đã biết, ...
+    }
+
+    // Tiến trình lạ ghi vào thư mục bảo vệ: gửi xuống service để hỏi/chặn
+    // và kích hoạt snapshot copy-on-write (phần rollback) trước khi cho ghi
+    return RequestDecisionFromService(Data);
+}
+```
+
+`IsProcessWhitelistedForWrite` cần một danh sách whitelist riêng, nới lỏng hơn whitelist thực thi (Explorer, ứng dụng Office, trình soạn thảo phổ biến đều cần ghi bình thường vào các thư mục này), dùng chung cơ chế kiểm tra chữ ký số đã có, chỉ khác tập publisher được coi là hợp lệ cho thao tác ghi. Tiến trình không nằm trong whitelist này khi cố ghi vào thư mục bảo vệ không bị chặn ngay lập tức mà trước tiên kích hoạt bước snapshot copy-on-write ở phần tiếp theo, để dù quyết định cuối cùng là allow hay block, dữ liệu gốc vẫn có một bản sao có thể khôi phục.
+
+## Tự động backup và rollback khi phát hiện ransomware
+
+Không dùng Volume Shadow Copy (VSS) cho cơ chế này, VSS tạo snapshot toàn volume, chi phí I/O và dung lượng cao, đúng công cụ cho system restore point nhưng quá nặng để chạy liên tục chỉ nhằm bảo vệ vài thư mục người dùng chỉ định. Thay vào đó, ngay tại callback `PreWriteCallback` của phần trước, trước khi cho phép lần ghi đầu tiên lên một file trong phiên làm việc hiện tại, service tạo một bản copy-on-write của file đó vào version store cục bộ (một thư mục ẩn được ACL bảo vệ, cấu trúc tương tự khu vực quarantine đã có).
+
+```
+VersionStoreRecord {
+    original_path: string,
+    version_timestamp: timestamp,
+    stored_path: string,        // đường dẫn bản sao trong version store
+    triggered_by_pid: uint32,
+    file_size: uint64
+}
+```
+
+Chỉ giữ một số phiên bản gần nhất cho mỗi file (ví dụ 3 phiên bản, cấu hình được theo dung lượng tổng của version store) để tránh version store phình to vô hạn, khi vượt giới hạn, xóa phiên bản cũ nhất trước. Khi phát hiện ransomware ở phần trước xác nhận (cả ba tín hiệu hành vi cùng đúng), luồng rollback tự động phục hồi toàn bộ file đã bị tiến trình đó ghi đè trong cùng phiên về phiên bản gần nhất trước khi bị mã hóa, dựa trên `triggered_by_pid` để xác định đúng tập file cần khôi phục thay vì khôi phục toàn bộ version store.
+
+Đánh đổi cần nêu rõ: copy-on-write đồng bộ cho mọi lần ghi đầu tiên trong thư mục bảo vệ làm tăng độ trễ ghi trong phạm vi các thư mục đó, chấp nhận được vì phạm vi hẹp (chỉ thư mục người dùng chỉ định, không phải toàn ổ đĩa) và đây chính là chi phí cần thiết đổi lấy khả năng khôi phục, cùng nguyên lý đánh đổi mà Controlled Folder Access của Windows Defender đã chấp nhận. Mở rộng cơ chế này ra toàn ổ đĩa sẽ khiến chi phí I/O vượt xa lợi ích, nên giữ nguyên phạm vi hẹp là quyết định thiết kế đúng, không phải hạn chế tạm thời cần khắc phục sau.
+
+## Kiến trúc sandbox cô lập file nghi ngờ
+
+Windows Sandbox, tính năng có sẵn từ Windows 10 phiên bản 1903, cấu hình qua file `.wsb` với `LogonCommand` để tự chạy một lệnh ngay khi khởi động, về lý thuyết dùng được để tự động mở một file nghi ngờ trong môi trường cô lập. Nhưng nó được thiết kế cho use case tương tác thủ công, không có API chính thức để lập trình điều khiển từ bên ngoài (khởi động, theo dõi tiến trình bên trong, trích xuất log hành vi, đóng lại) một cách đáng tin cậy ở quy mô hàng trăm file mỗi ngày, dùng nó cho pipeline detonation tự động sẽ liên tục gặp giới hạn không phải do lỗi, mà vì đây không phải mục đích thiết kế ban đầu của tính năng.
+
+Với nhu cầu tự động hóa quy mô, hướng khả thi hơn là tự xây lightweight VM riêng bằng Windows Hypervisor Platform API (WHP), gọi `WHvCreatePartition` để tạo một partition ảo hóa tối giản, nạp một image Windows đã cấu hình sẵn (không cần đầy đủ như một VM thông thường, chỉ cần đủ để chạy file thực thi và giám sát được), và giao tiếp với VM qua kênh Hyper-V socket. Toàn quyền lập trình vòng đời VM cho phép: chụp snapshot trạng thái sạch ngay sau khi VM khởi động xong, chạy file nghi ngờ, thu log hành vi qua kênh giao tiếp, rồi khôi phục VM về đúng snapshot sạch đó cho lần detonation tiếp theo thay vì khởi động lại từ đầu mỗi lần, đây là yếu tố quyết định tốc độ xử lý hàng loạt file trong thực tế.
+
+```c
+WHV_PARTITION_HANDLE partition;
+WHvCreatePartition(&partition);
+WHvSetupPartition(partition);
+// Nạp memory image đã chuẩn bị sẵn, cấu hình vCPU, ánh xạ kênh giao tiếp
+// qua Hyper-V socket để nhận log hành vi từ agent chạy bên trong VM
+WHvCreateVirtualProcessor(partition, 0, 0);
+```
+
+Windows Sandbox vẫn giữ vai trò hữu ích ở một use case khác, nhỏ hơn: cho phép người dùng chủ động chọn "mở file này trong môi trường an toàn" từ menu chuột phải, một thao tác thủ công theo yêu cầu chứ không phải một bước tự động trong pipeline phát hiện, hai use case này nên tách biệt trong thiết kế UI, không gộp chung thành một tính năng "sandbox" duy nhất.
+
+## Giám sát API call trong sandbox để phát hiện hành vi độc hại
+
+Bên trong VM cô lập đã dựng ở phần trước, một agent nhỏ tự viết (chạy sẵn trong image, khởi động cùng lúc với VM) chịu trách nhiệm inject một DLL giám sát vào chính tiến trình của file nghi ngờ ngay khi nó được tạo, dùng kỹ thuật hook API kinh điển (sửa vài byte đầu hàm trong Import Address Table hoặc trampoline hook) để chặn và ghi log các lời gọi API có giá trị phát hiện cao nhất, thay vì hook toàn bộ API hệ thống (chi phí lớn, log quá nhiều nhiễu):
+
+- Nhóm API tạo/ghi file (`CreateFileW`, `WriteFile`), phát hiện hành vi ghi hàng loạt hoặc ghi vào thư mục hệ thống.
+- Nhóm API mạng (`connect`, `WSASend`), ghi lại địa chỉ IP/domain đích để đối chiếu với reputation ở phần cloud threat intelligence.
+- Nhóm API tiêm code (`WriteProcessMemory`, `CreateRemoteThread`, `VirtualAllocEx`), vì đây là tổ hợp hành vi injection kinh điển, giá trị phát hiện cao dù chỉ xảy ra một lần.
+- Nhóm API registry (`RegSetValueExW`) trên các khóa autorun đã biết, dấu hiệu cố gắng duy trì sự tồn tại sau khi khởi động lại.
+
+Vì môi trường là VM cô lập hoàn toàn (không kết nối mạng thật ra ngoài, chỉ có mạng ảo giả lập để quan sát hành vi kết nối mà không cho phép nó thực sự tới máy chủ C2 thật), file nghi ngờ có thể thực thi tự do mà không gây rủi ro cho máy người dùng thật, đây là lợi thế cốt lõi của sandbox so với việc chỉ phân tích tĩnh (hash, YARA, heuristic) như scan engine cũ đã làm, vì phân tích tĩnh không bao giờ thấy được hành vi runtime thật của một payload chỉ giải mã và chạy sau khi đã vượt qua kiểm tra ban đầu.
+
+Log từ agent gửi ra ngoài VM qua kênh Hyper-V socket dưới dạng structured event (tên API, tham số quan trọng, timestamp), tích lũy trong suốt thời gian chạy detonation (thường giới hạn 30-60 giây, đủ cho phần lớn payload tự kích hoạt hành vi độc hại của nó) trước khi VM bị khôi phục về snapshot sạch cho lần chạy kế tiếp.
+
+## Quyết định kết luận từ kết quả sandbox
+
+Log hành vi thu được từ phần trước không tự nó là một kết luận, cần một bước tính điểm chuyển từ danh sách API call thành một điểm rủi ro duy nhất, theo cùng triết lý weighted score đã dùng cho heuristic ở bài trước chứ không phải một bộ quy tắc hoàn toàn mới. Mỗi nhóm hành vi quan sát được cộng điểm theo trọng số khác nhau: tổ hợp injection (`WriteProcessMemory` + `CreateRemoteThread` trong cùng phiên) cộng điểm cao nhất vì hiếm khi xuất hiện ở phần mềm hợp lệ, ghi vào khóa registry autorun cộng điểm trung bình, kết nối mạng ra ngoài với tần suất cao trong thời gian ngắn cộng điểm thấp hơn (vì nhiều phần mềm hợp lệ cũng gọi API cập nhật khi khởi động lần đầu).
+
+Điểm tổng vượt ngưỡng cấu hình được trả về kết luận `Malicious`, dưới ngưỡng đó nhưng có ít nhất một hành vi đáng chú ý trả về `Suspicious`, giữ nguyên bốn trạng thái `Clean/Malicious/Suspicious/ScanError` đã định nghĩa cho scan engine, không tạo một tập trạng thái riêng cho sandbox, để luồng xử lý phía sau (quarantine, cảnh báo người dùng) không phải phân biệt "sandbox nói gì" khác với "scan engine nói gì".
+
+Trường hợp cần xử lý riêng: nếu file không thể hiện bất kỳ hành vi đáng chú ý nào trong suốt thời gian detonation (30-60 giây), kết quả không nên mặc định là `Clean` mà nên là một trạng thái yếu hơn, nhiều mã độc hiện đại chủ động trì hoãn hành vi độc hại (kiểm tra môi trường ảo hóa, chờ một khoảng thời gian dài, hoặc chờ điều kiện cụ thể như ngày giờ hệ thống) chính xác để vượt qua sandbox có thời gian quan sát ngắn. Kết quả "không quan sát được hành vi đáng ngờ trong sandbox" nên được publish vào event bus ở mức thông tin thấp, kết hợp với kết luận từ hash/YARA/heuristic ban đầu đã đưa file vào hàng đợi sandbox, không tự động nâng lên `Clean` chỉ vì sandbox không thấy gì bất thường trong khung thời gian quan sát có hạn của nó.
+
+## Chặn URL và domain phishing ở tầng mạng
+
+DNS filtering truyền thống, chạy một DNS proxy cục bộ trên `127.0.0.1`, trỏ adapter mạng vào đó, đối chiếu domain được truy vấn với danh sách domain phishing đã biết trước khi forward hoặc chặn, chỉ có tác dụng khi truy vấn thực sự đi qua DNS resolver hệ thống. Trình duyệt hiện đại (Chrome, Edge) mặc định đã bật DNS over HTTPS (DoH) với resolver riêng, khiến truy vấn không còn đi qua resolver hệ thống nữa, tạo lỗ hổng hoàn toàn cho DNS filtering thuần túy.
+
+Hai hướng bổ sung cần dùng song song, không thay thế DNS filtering mà lấp đúng khoảng trống DoH tạo ra: thứ nhất, chặn theo IP đích đã resolve tại tầng WFP (dùng lại callout đã đăng ký cho firewall) dựa trên reputation của chính địa chỉ IP thay vì tên miền, cách này vẫn hoạt động bất kể trình duyệt dùng DNS thường hay DoH, vì kết nối TCP/TLS cuối cùng vẫn phải tới đúng địa chỉ IP thật. Thứ hai, tích hợp trực tiếp vào trình duyệt qua extension để kiểm tra URL đầy đủ (bao gồm cả path, không chỉ domain) ngay tại tầng trình duyệt trước khi trang tải, cách này được trình bày ở phần tiếp theo và đáng tin cậy hơn hẳn hai cách tiếp cận ở tầng mạng vì nhìn thấy được toàn bộ URL, không chỉ phần domain.
+
+Một lựa chọn mạnh tay hơn, chặn kết nối TLS tới các IP resolver DoH công khai đã biết (Cloudflare 1.1.1.1, Google 8.8.8.8 khi dùng qua DoH) để buộc trình duyệt fallback về DNS hệ thống, có tác dụng phụ ảnh hưởng trực tiếp tới trải nghiệm duyệt web bình thường của người dùng (một số trang web hoặc dịch vụ có thể chậm hơn hoặc lỗi nếu phụ thuộc vào đúng resolver đó), nên không nên bật mặc định mà để thành một tùy chọn nâng cao, tắt sẵn, chỉ dành cho người dùng chủ động muốn tối đa hóa khả năng chặn phishing và chấp nhận đánh đổi.
+
+Danh sách domain/IP phishing đã biết nên đến từ nguồn cập nhật thường xuyên (tái sử dụng đúng cơ chế update service theo delta đã xây cho CSDL virus ở bài trước, chỉ khác loại dữ liệu tải về), không phải danh sách tĩnh đóng gói sẵn trong bản cài đặt, domain phishing thường sống rất ngắn (vài giờ đến vài ngày) trước khi bị gỡ hoặc đổi sang domain khác.
+
+## Tích hợp cảnh báo phishing vào trình duyệt
+
+Viết một browser extension tối giản (dùng chung một codebase Manifest V3 cho cả Chrome và Edge, vì cả hai đều dựa trên Chromium) chỉ làm đúng một việc: bắt sự kiện điều hướng qua `webNavigation.onBeforeNavigate`, gửi URL đầy đủ (không chỉ domain) sang service nền cài trên máy để kiểm tra, và chặn hiển thị trang bằng cách redirect sang một trang cảnh báo nội bộ của extension nếu service trả về kết quả nguy hiểm, toàn bộ logic kiểm tra (đối chiếu danh sách phishing, gọi cloud threat intelligence) nằm ở service, extension chỉ là lớp chuyển tiếp mỏng.
+
+Giao tiếp giữa extension và service nền dùng Native Messaging, cơ chế chính thức của Chromium cho phép extension gọi một executable cục bộ đã đăng ký qua manifest riêng, giao tiếp qua stdin/stdout theo giao thức JSON đơn giản, không cần mở cổng mạng cục bộ (tránh việc phần mềm khác trên máy có thể giả mạo kết nối tới cổng đó).
+
+```json
+{
+  "name": "com.yourantivirus.native_host",
+  "description": "Cầu nối kiểm tra URL với service nền antivirus",
+  "path": "C:\\Program Files\\YourAntivirus\\native_host.exe",
+  "type": "stdio",
+  "allowed_origins": ["chrome-extension://<extension-id>/"]
+}
+```
+
+Độ trễ kiểm tra mỗi lần điều hướng cần giữ dưới khoảng vài chục mili giây để không cảm nhận được khi duyệt web bình thường, áp dụng đúng nguyên tắc cache theo domain đã dùng ở các module khác: domain đã kiểm tra sạch gần đây được cache tại chính native host, chỉ gọi xuống service đầy đủ (có thể kèm tra cloud threat intelligence) khi gặp domain chưa từng thấy hoặc cache đã hết hạn. Vì extension chỉ đăng ký được `allowed_origins` cho đúng extension ID của chính mình, kênh giao tiếp này không thể bị một extension độc hại khác trên cùng trình duyệt giả mạo để gửi lệnh trái phép xuống service.
+
+## Kiểm soát thiết bị USB khi cắm vào máy
+
+Đăng ký nhận thông báo `WM_DEVICECHANGE` trong một cửa sổ ẩn của service (hoặc dùng `RegisterDeviceNotification` với handle service nếu không muốn tạo window), lọc sự kiện `DBT_DEVICEARRIVAL` kèm cấu trúc `DEV_BROADCAST_DEVICEINTERFACE` chứa `dbcc_classguid`, đây là Device Setup Class GUID cho biết chính xác loại thiết bị vừa cắm vào, và là chỗ cần lọc đúng để không chặn nhầm.
+
+```c
+case WM_DEVICECHANGE:
+    if (wParam == DBT_DEVICEARRIVAL) {
+        PDEV_BROADCAST_DEVICEINTERFACE dev =
+            (PDEV_BROADCAST_DEVICEINTERFACE)lParam;
+
+        if (IsEqualGUID(&dev->dbcc_classguid, &GUID_DEVINTERFACE_DISK)) {
+            // USB mass storage: đưa vào luồng kiểm tra policy + tự động quét
+            HandleMassStorageArrival(dev->dbcc_name);
+        }
+        // GUID_DEVINTERFACE_HID (bàn phím, chuột) không xử lý ở đây,
+        // để nguyên hoạt động bình thường trừ khi có rule chặn riêng
+    }
+    break;
+```
+
+Chỉ lọc theo `dbcc_classguid`, không dùng chuỗi mô tả thiết bị (`Manufacturer`/`FriendlyName` do nhà sản xuất tự đặt, không đáng tin cậy để phân loại vì có thể ghi tùy ý), USB mass storage thuộc `GUID_DEVINTERFACE_DISK`, HID (bàn phím, chuột) thuộc `GUID_DEVINTERFACE_HID`, chính sách allow/block ở phần tiếp theo chỉ áp dụng cho class mass storage.
+
+Cần thừa nhận thẳng một giới hạn thật của cách lọc theo class này: kỹ thuật BadUSB cho phép một thiết bị giả dạng đồng thời cả HID lẫn mass storage, dùng phần HID (được để nguyên không kiểm soát) để tự động gõ lệnh độc hại, hoàn toàn nằm ngoài phạm vi của bộ lọc nhắm vào mass storage. Module này chỉ giải quyết vector phổ biến hơn nhiều (lây mã độc qua file trên USB lưu trữ), còn phòng chống BadUSB đòi hỏi giám sát hành vi khác, theo dõi tốc độ gõ phím bất thường ngay sau khi một thiết bị HID mới xuất hiện, nên được ghi nhận là hạn chế đã biết, không phải lỗ hổng thiết kế bị bỏ sót.
+
+Khi một thiết bị mass storage được xác nhận, `HandleMassStorageArrival` kích hoạt full scan chỉ trên volume vừa gắn (dùng lại đúng scan engine đã có ở bài trước, giới hạn phạm vi enumerate vào volume mới thay vì toàn bộ ổ đĩa), kết quả publish vào event bus như mọi phát hiện khác.
+
+## Chính sách allow/block theo VID/PID thiết bị
+
+Mỗi thiết bị USB mang một Device Instance ID dạng chuỗi (ví dụ `USBSTOR\Disk&Ven_Kingston&Prod_DataTraveler&Rev_1.00\...`), lấy qua `SetupDiGetDeviceInstanceId` sau khi liệt kê bằng `SetupDiEnumDeviceInfo`, chuỗi này chứa Vendor ID (VID) và Product ID (PID) nhận diện đúng model thiết bị, khác với serial number (định danh từng thiết bị vật lý cụ thể, dùng khi cần phân biệt hai ổ USB cùng model).
+
+```sql
+CREATE TABLE usb_device_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    vendor_id TEXT NOT NULL,
+    product_id TEXT NOT NULL,
+    serial_number TEXT,             -- NULL nghĩa là áp cho mọi thiết bị cùng VID/PID
+    action TEXT NOT NULL CHECK(action IN ('allow', 'block', 'ask')),
+    auto_scan BOOLEAN NOT NULL DEFAULT 1
+);
+```
+
+Cột `serial_number` cho phép hai mức chính sách: rule theo VID/PID áp dụng cho mọi thiết bị cùng model (phù hợp khi công ty phát cho nhân viên cùng loại USB được duyệt), rule kèm serial number cụ thể áp dụng cho đúng một thiết bị vật lý (phù hợp khi chỉ tin tưởng đúng chiếc USB cá nhân của người dùng, không phải mọi USB cùng hãng cùng model). Rule mặc định hợp lý khi chưa có chính sách nào khớp là `ask` kèm `auto_scan = 1`, vừa không chặn cứng gây bất tiện ngay từ lần đầu, vừa đảm bảo thiết bị lạ luôn được quét trước khi người dùng thao tác với nội dung bên trong.
+
+Khi tra rule cho một thiết bị mới cắm vào, thứ tự ưu tiên giống hệt nguyên tắc đã dùng cho rule phân quyền ứng dụng ở bài trước: tìm rule khớp cả VID/PID lẫn serial number trước, không có mới tìm rule chỉ khớp VID/PID, không có nữa mới rơi về rule mặc định, giữ nhất quán logic tra rule giữa các module khác nhau giúp code dễ bảo trì hơn so với mỗi module tự phát minh một thứ tự ưu tiên riêng.
+
+## Exploit protection chống code injection và heap spray
+
+`SetProcessMitigationPolicy` chỉ set được mitigation (DEP, ASLR bottom-up, Control Flow Guard, Arbitrary Code Guard ngăn cấp phát bộ nhớ thực thi được tại runtime) cho chính tiến trình gọi nó, hoặc cho tiến trình con do chính mình `CreateProcess` thông qua `UpdateProcThreadAttribute` với `PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY` trước khi resume luồng chính. Với tiến trình của chính app antivirus, đây là việc dễ và nên làm ngay: tự bảo vệ service và các tiến trình con của mình bằng bộ mitigation nghiêm ngặt nhất có thể, không cần đặc quyền hay driver nào thêm.
+
+```c
+PROCESS_MITIGATION_DYNAMIC_CODE_POLICY dynamicCode = {0};
+dynamicCode.ProhibitDynamicCode = 1;
+SetProcessMitigationPolicy(ProcessDynamicCodePolicy, &dynamicCode, sizeof(dynamicCode));
+
+PROCESS_MITIGATION_ASLR_POLICY aslr = {0};
+aslr.EnableForceRelocateImages = 1;
+aslr.EnableBottomUpRandomization = 1;
+SetProcessMitigationPolicy(ProcessASLRPolicy, &aslr, sizeof(aslr));
+```
+
+Với một tiến trình bất kỳ do người dùng tự mở, không có API user-mode chính thức nào để áp mitigation từ bên ngoài sau khi tiến trình đã tồn tại, Windows Defender Exploit Guard làm được điều này ở phạm vi toàn hệ thống chỉ vì nó là thành phần tích hợp sẵn trong Windows (chính sách ghi qua Group Policy/registry được kernel đọc và áp dụng ngay tại thời điểm tạo tiến trình mới, trước khi entry point chạy), đây là quyền hạn riêng của hệ điều hành, không phải API mở cho phần mềm bên thứ 3 áp đặt lên tiến trình tùy ý.
+
+Phạm vi thực tế khả thi cho một app antivirus độc lập vì vậy chia làm hai: tự bảo vệ tiến trình của chính mình bằng API trên (dễ, làm ngay), và với tiến trình khác chỉ giám sát hành vi khả nghi sau khi đã chạy thay vì áp đặt chính sách phòng ngừa từ trước, cụ thể là mở rộng callback `PsSetCreateProcessNotifyRoutineEx` đã đăng ký ở bài trước để theo dõi thêm các lời gọi `NtUnmapViewOfSection` và `WriteProcessMemory` bất thường giữa hai tiến trình khác nhau, cơ chế phát hiện process hollowing được trình bày ở phần tiếp theo. Nêu rõ giới hạn này ngay từ đầu quan trọng hơn cố gắng giả vờ có "exploit protection toàn diện" như một sản phẩm đã tích hợp sẵn trong hệ điều hành.
+
+## Bảo vệ tiến trình khỏi process hollowing
+
+Process hollowing (tạo một tiến trình hợp lệ ở trạng thái suspended, unmap vùng nhớ image gốc của nó, rồi ghi đè bằng code độc hại trước khi resume) để lại một dấu vết hành vi khá đặc trưng: một tổ hợp lời gọi API xảy ra liên tiếp trong thời gian ngắn, từ một tiến trình khác nhắm vào tiến trình vừa tạo, `NtUnmapViewOfSection` (gỡ ánh xạ image gốc) theo sau bởi `VirtualAllocEx`/`WriteProcessMemory` (cấp phát và ghi code mới vào đúng vùng nhớ đó) rồi `SetThreadContext`/`ResumeThread` (đổi entry point và cho chạy).
+
+Giám sát tổ hợp này cần hook ở tầng kernel vì các API trên đều có phiên bản `Nt*` tương ứng trong ntdll, dùng lại cùng kỹ thuật callback đã có: mở rộng driver đã đăng ký `PsSetCreateProcessNotifyRoutineEx` để thêm theo dõi thao tác truy cập bộ nhớ giữa các tiến trình thông qua object callback (`ObRegisterCallbacks` trên object type `PsProcessType`, chặn `OB_PRE_OPERATION_INFORMATION` khi một tiến trình xin quyền `PROCESS_VM_WRITE`/`PROCESS_VM_OPERATION` lên tiến trình khác).
+
+```c
+OB_PREOP_CALLBACK_STATUS PreOperationCallback(
+    PVOID RegistrationContext, POB_PRE_OPERATION_INFORMATION Info) {
+
+    if (Info->ObjectType == *PsProcessType &&
+        (Info->Parameters->CreateHandleInformation.DesiredAccess &
+         (PROCESS_VM_WRITE | PROCESS_VM_OPERATION))) {
+
+        HANDLE requesterPid = PsGetCurrentProcessId();
+        HANDLE targetPid = PsGetProcessId((PEPROCESS)Info->Object);
+
+        if (IsUnrelatedProcess(requesterPid, targetPid) &&
+            !IsWhitelistedDebuggerOrTool(requesterPid)) {
+            LogSuspiciousMemoryAccess(requesterPid, targetPid);
+            // Không chặn ngay tại đây để tránh phá vỡ công cụ debug hợp lệ,
+            // chỉ ghi nhận và publish vào event bus để correlator đánh giá
+        }
+    }
+    return OB_PREOP_SUCCESS;
+}
+```
+
+`IsWhitelistedDebuggerOrTool` là whitelist bắt buộc phải có, công cụ debug, trình giám sát hệ thống hợp lệ (Process Explorer, Visual Studio debugger) đều thực hiện chính xác tổ hợp quyền truy cập bộ nhớ này một cách hợp pháp, dùng lại whitelist theo chữ ký số đã có ở bài trước để loại trừ các publisher đã biết là công cụ hệ thống hợp lệ, tránh biến tính năng này thành nguồn cảnh báo giả liên tục mỗi khi người dùng mở Task Manager hay một trình debug thông thường.
+
+## Boot-time scan trước khi Windows nạp đầy đủ
+
+Đây là một cơ chế khác hẳn với ELAM driver đã xây ở bài trước, dù cùng nằm ở giai đoạn "sớm" của hệ thống. ELAM chỉ phân loại driver boot-start khác trong quá trình Windows tự boot bình thường, không quét nội dung file trên đĩa. "Boot-time scan" theo đúng nghĩa antivirus thương mại hay dùng (tương tự Windows Defender Offline) là khởi động lại máy vào một môi trường Windows PE tối giản hoàn toàn tách biệt với Windows đang cài, chạy scan engine trong môi trường đó, nơi rootkit thường trú bên trong Windows chính không có cách nào can thiệp vì hệ điều hành đó chưa hề được nạp.
+
+Xây dựng cơ chế này cần Windows Assessment and Deployment Kit (ADK) để tạo image WinPE, đóng gói scan engine (đúng thư viện đã xây ở bài trước, biên dịch lại để chạy được trong môi trường WinPE hạn chế hơn Windows đầy đủ) cùng một bản CSDL signature vào image đó, rồi tạo phương tiện khởi động (USB hoặc phân vùng recovery riêng trên máy) và một lối vào để kích hoạt reboot vào image này từ trong Windows đang chạy (qua `bcdedit` thêm boot entry trỏ tới WinPE image, hoặc tích hợp với Windows Recovery Environment sẵn có bằng cách đăng ký thêm một "custom recovery tool").
+
+Đây là hạng mục phức tạp nhất về hạ tầng build trong toàn bộ các tính năng mở rộng của bài này, và giá trị thực của nó (bắt được rootkit đã ẩn sâu tới mức vô hiệu hóa được cả real-time protection đang chạy trong Windows) chỉ đáng kể sau khi các lớp phòng thủ khác, real-time protection, sandbox, exploit protection, anti-ransomware, đã hoàn thiện và chứng minh hoạt động ổn định trên diện rộng người dùng thật. Với một app mới bắt đầu, nên xếp boot-time scan ở cuối lộ trình phát triển, không phải vì nó kém quan trọng về mặt kỹ thuật, mà vì rootkit tới được mức cần đến boot-time scan mới phát hiện thường đã phải vượt qua rất nhiều lớp phòng thủ khác trước đó, đầu tư hoàn thiện các lớp đó trước mang lại giá trị bảo vệ tức thời cao hơn cho phần lớn người dùng.
+
+## Tích hợp cloud threat intelligence
+
+CSDL signature cục bộ đã xây ở bài trước cập nhật theo chu kỳ vài giờ qua cơ chế delta, đủ nhanh cho phần lớn mã độc, nhưng có một khoảng trống thời gian thật giữa lúc một mẫu mã độc mới xuất hiện trên toàn cầu và lúc nó kịp vào bản cập nhật CSDL tiếp theo của chính người dùng. Cloud threat intelligence lấp khoảng trống này bằng một API tra cứu reputation theo hash, gọi trực tiếp khi engine gặp một file chưa có trong CSDL cục bộ và chưa từng thấy trước đó, trả lời gần như tức thời dựa trên dữ liệu tổng hợp từ toàn bộ người dùng khác đang chạy cùng sản phẩm.
+
+```
+POST /v1/reputation
+{ "sha256": "<hash>", "file_size": 1048576, "first_seen_locally": "2026-01-15T10:00:00Z" }
+
+Response:
+{ "verdict": "unknown" | "clean" | "malicious" | "suspicious",
+  "prevalence": 0,        // số máy khác đã thấy hash này (0 = rất hiếm, đáng chú ý)
+  "confidence": 0.0-1.0 }
+```
+
+Trường `prevalence` mang giá trị thực tế quan trọng không kém verdict: một file hoàn toàn mới, chưa từng thấy ở bất kỳ máy nào khác trong hệ thống (`prevalence = 0`), tự nó là một tín hiệu đáng chú ý ngay cả khi chưa có verdict rõ ràng, phần lớn phần mềm hợp lệ phổ biến đã được nhìn thấy ở hàng nghìn máy khác, trong khi mã độc nhắm mục tiêu (targeted) hoặc vừa được biên dịch lại để né signature thường có prevalence rất thấp. Kết hợp `prevalence` thấp với các tín hiệu heuristic khác (đã có ở bài trước) cho kết luận đáng tin hơn là chỉ dựa vào một trong hai.
+
+Vì gọi API này cho mọi file chưa biết sẽ tạo phụ thuộc mạng liên tục và rò rỉ thông tin về file người dùng đang mở (dù chỉ là hash, không phải nội dung), cần giới hạn phạm vi gọi: chỉ tra cứu cloud cho file đã qua vòng lọc CSDL cục bộ và YARA mà không kết luận được, không gọi cho mọi file được quét, và cho phép người dùng tắt hoàn toàn tính năng này (chấp nhận độ trễ phát hiện threat mới cao hơn) nếu ưu tiên không muốn hash file của mình rời khỏi máy dưới bất kỳ hình thức nào.
+
+## Gaming/Silent mode khi phát hiện ứng dụng toàn màn hình
+
+Phát hiện một ứng dụng đang chạy ở chế độ fullscreen exclusive (khác với fullscreen borderless windowed, vốn không cần xử lý đặc biệt vì Windows vẫn compositor bình thường) bằng cách gọi `SHQueryUserNotificationState` định kỳ (mỗi vài giây, chi phí thấp), hàm này trả về `QUNS_RUNNING_D3D_FULL_SCREEN` khi có ứng dụng Direct3D đang chiếm toàn màn hình theo đúng chế độ exclusive, là tín hiệu chính xác nhất Windows cung cấp sẵn cho use case này thay vì tự đoán qua kích thước cửa sổ.
+
+```c
+QUERY_USER_NOTIFICATION_STATE state;
+if (SUCCEEDED(SHQueryUserNotificationState(&state)) &&
+    state == QUNS_RUNNING_D3D_FULL_SCREEN) {
+    EnterGamingMode();
+}
+```
+
+Khi vào Gaming/Silent mode, ba hành vi thay đổi đồng thời: toast notification (cảnh báo threat, nhắc cập nhật CSDL) tạm ẩn hoàn toàn thay vì chỉ giảm mức độ nổi bật, vì bất kỳ notification nào bật lên giữa lúc chơi game fullscreen đều có thể làm mất frame hoặc gây giật hình; full scan và các tác vụ nền nặng khác (sandbox detonation hàng loạt, quét lỗ hổng phần mềm) tự động tạm dừng thay vì chỉ hạ priority như đã làm cho trường hợp người dùng thao tác bình thường ở bài trước, vì game thường chiếm dụng CPU/GPU ở mức cao hơn nhiều so với thao tác văn phòng thông thường; nhưng real-time protection và firewall vẫn giữ nguyên hoạt động đầy đủ, không tắt hay hạ mức bảo vệ chỉ vì đang ở gaming mode, đây là ranh giới quan trọng cần giữ, che giấu thông báo khác hẳn với tắt bảo vệ.
+
+Cảnh báo bị ẩn trong lúc gaming mode không được phép biến mất hoàn toàn, tích lũy vào một hàng đợi, hiển thị lại ngay khi `SHQueryUserNotificationState` không còn trả về trạng thái fullscreen exclusive nữa, gộp theo đúng cơ chế correlator ở phần xử lý sự kiện trùng lặp nếu có nhiều cảnh báo tích lũy trong cùng phiên chơi game, để người dùng không bị dội một loạt thông báo rời rạc ngay khi vừa thoát game.
+
+## Quét lỗ hổng phần mềm và driver lỗi thời
+
+Liệt kê phần mềm đã cài qua registry (`HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall`, đọc `DisplayName` và `DisplayVersion` của từng entry) và driver đang tải qua `SetupDiEnumDeviceInfo` kết hợp `SetupDiGetDeviceRegistryProperty` lấy `DriverVersion`, hai nguồn dữ liệu này cho một danh sách đầy đủ phần mềm và driver kèm phiên bản cụ thể đang chạy trên máy, không cần quét file hay phân tích binary.
+
+Đối chiếu danh sách này với dữ liệu CVE công khai (NVD - National Vulnerability Database cung cấp feed JSON miễn phí, cập nhật liên tục) theo cặp (tên phần mềm chuẩn hóa, phiên bản) để tìm ra phần mềm đang chạy phiên bản có lỗ hổng đã công bố, bước chuẩn hóa tên phần mềm là phần khó nhất về mặt kỹ thuật, vì `DisplayName` trong registry không theo chuẩn CPE (Common Platform Enumeration) mà CVE database dùng để định danh sản phẩm; cần một bảng ánh xạ thủ công hoặc bán tự động giữa tên hiển thị phổ biến (`"Google Chrome"`, `"7-Zip 22.01 (x64)"`) và định danh CPE chuẩn (`cpe:2.3:a:google:chrome`) cho từng phần mềm phổ biến, không có cách tự động hóa hoàn toàn đáng tin cậy cho bước này.
+
+```
+VulnerabilityFinding {
+    software_name: string,
+    installed_version: string,
+    cve_id: string,
+    severity_score: float,      // CVSS score từ NVD
+    fix_available_version: string
+}
+```
+
+Kết quả chỉ nên trình bày dưới dạng khuyến nghị cập nhật ("phiên bản X của phần mềm Y đang cài có lỗ hổng đã công bố, khuyến nghị cập nhật lên phiên bản Z"), không tự động tải và cài bản cập nhật thay người dùng, việc tự động cập nhật phần mềm của bên thứ 3 nằm ngoài phạm vi và trách nhiệm hợp lý của một antivirus, dễ gây xung đột hoặc hỏng cấu hình nếu phần mềm đó có tùy chỉnh riêng của người dùng. Ưu tiên hiển thị các lỗ hổng có `severity_score` cao và có khai thác đã biết công khai lên đầu danh sách, thay vì liệt kê tất cả theo thứ tự phát hiện.
+
+## Bảo vệ webcam và microphone khỏi truy cập trái phép
+
+Windows expose trạng thái sử dụng camera/microphone qua registry dưới `HKCU\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\webcam` và `\microphone`, mỗi tiến trình từng truy cập có một subkey riêng ghi thời điểm bắt đầu/kết thúc truy cập gần nhất, nhưng đọc registry định kỳ chỉ cho biết lịch sử, không đủ nhanh để cảnh báo ngay lúc truy cập đang diễn ra. Cách đáng tin cậy hơn là giám sát trực tiếp việc mở device qua driver: đăng ký `IoRegisterDeviceInterface`/notification cho device interface class `KSCATEGORY_VIDEO_CAMERA` (webcam) và `KSCATEGORY_AUDIO_RECORDING` (microphone) để nhận sự kiện ngay khi một tiến trình mở handle tới thiết bị.
+
+```c
+// Đăng ký nhận thông báo khi có device interface mới thuộc camera/mic mở ra
+IoRegisterPlugPlayNotification(
+    EventCategoryDeviceInterfaceChange,
+    PNPNOTIFY_DEVICE_INTERFACE_INCLUDE_EXISTING_INTERFACES,
+    (PVOID)&KSCATEGORY_VIDEO_CAMERA,
+    DriverObject,
+    CameraAccessCallback,
+    NULL,
+    &notificationHandle);
+```
+
+Khi callback nhận sự kiện, tra tiến trình vừa mở thiết bị qua PID kèm theo trong thông tin sự kiện, đối chiếu whitelist riêng cho truy cập camera/mic (khác whitelist thực thi hay whitelist ghi thư mục, ứng dụng gọi video call, phần mềm họp trực tuyến cần vào whitelist này một cách tường minh, không tự động allow chỉ vì đã qua whitelist chữ ký số chung). Tiến trình không nằm trong whitelist khi mở camera/mic kích hoạt hiển thị ngay một overlay thông báo nhỏ trên màn hình (không phải toast notification có thể bị bỏ qua, mà một chỉ báo cố định kiểu icon sáng lên, tương tự cách Windows 11 tự hiển thị chỉ báo camera đang dùng) kèm tên tiến trình, để người dùng phát hiện ngay nếu đó không phải ứng dụng họ chủ động mở.
+
+Khác với các module chặn cứng khác, hành động mặc định ở đây nên là cảnh báo tức thời thay vì tự động chặn quyền truy cập thiết bị, chặn nhầm một ứng dụng hợp lệ đang gọi video call sẽ gây gián đoạn ngay lập tức và rõ ràng hơn nhiều so với hầu hết false positive khác, trong khi giá trị bảo vệ chính của module này nằm ở việc người dùng biết được ai đang truy cập, không nhất thiết phải tự động ngăn chặn mọi lần.
+
+## Giám sát thiết bị trong mạng gia đình
+
+Phát hiện thiết bị khác trong cùng mạng LAN bằng hai kỹ thuật kết hợp, cả hai đều thụ động hoặc chỉ dùng giao thức phát hiện tiêu chuẩn, tránh bị hiểu nhầm là chính app đang quét/tấn công mạng: đọc bảng ARP hiện có của máy (`GetIpNetTable`, không cần tự gửi gói ARP request tràn lan) để lấy danh sách địa chỉ IP/MAC đã từng giao tiếp gần đây, và lắng nghe mDNS/SSDP (giao thức các thiết bị IoT, máy in, TV thông minh dùng để tự quảng bá) trên cổng chuẩn (5353 cho mDNS, 1900 cho SSDP) để thu thập thêm thiết bị chưa có trong bảng ARP.
+
+Với mỗi thiết bị phát hiện, tra cứu ba octet đầu của địa chỉ MAC (OUI - Organizationally Unique Identifier) trong bảng công khai của IEEE để xác định hãng sản xuất, kết hợp thông tin quảng bá mDNS/SSDP (thường có tên thiết bị, loại thiết bị) để hiển thị cho người dùng một danh sách dễ hiểu ("TV thông minh Samsung", "Máy in HP") thay vì chỉ địa chỉ IP/MAC thô. Việc quét cổng mở trên từng thiết bị nên giới hạn ở mức kiểm tra thụ động các cổng phổ biến hay bị để mở không an toàn (Telnet 23, cổng quản trị router mặc định) bằng kết nối TCP đơn giản, không dùng kỹ thuật quét cổng tích cực kiểu port scan quy mô lớn, vừa tránh gây báo động giả trên chính router/thiết bị bảo mật khác trong mạng, vừa tránh vướng vào vùng xám pháp lý của việc "quét mạng" ngay cả khi đó là mạng của chính người dùng.
+
+Kết quả module này mang tính thông tin nhiều hơn hành động tự động: hiển thị danh sách thiết bị trong mạng kèm cảnh báo nếu phát hiện thiết bị lạ chưa từng thấy trước đó hoặc thiết bị có cổng quản trị mặc định đang mở, để người dùng tự quyết định có phải thiết bị của mình hay không, không có cơ sở đáng tin cậy nào để antivirus tự động "chặn" một thiết bị khác trong mạng LAN, vì đó là hành động ở tầng router/switch, ngoài phạm vi kiểm soát của một ứng dụng chạy trên một máy tính đơn lẻ trong mạng đó.
+
+## Trung tâm cảnh báo và risk score tổng hợp
+
+Với chín module phát hiện độc lập giờ đã có (scan engine, real-time, firewall, anti-ransomware, sandbox, anti-phishing, USB, exploit protection, giám sát mạng gia đình), hiển thị riêng từng chỉ số cho người dùng là vô nghĩa, không ai muốn xem chín con số rời rạc để tự đánh giá máy mình an toàn tới đâu. Risk score tổng hợp gộp tín hiệu từ mọi module thành một chỉ số duy nhất, dễ hiểu ngay từ màn hình chính của app.
+
+Thiết kế risk score theo hướng trừ điểm từ một mức nền tối đa (ví dụ 100 điểm = an toàn tuyệt đối), mỗi loại phát hiện đang mở (chưa được người dùng xử lý) trừ một số điểm cố định theo mức độ nghiêm trọng, không cộng dồn vô hạn mà giới hạn mức trừ tối đa cho mỗi loại module để một module lỗi liên tục gắn cờ không kéo điểm về âm vô lý:
+
+```
+RiskScore = 100
+          - min(30, số threat Malicious đang chờ xử lý × 10)
+          - min(20, số kết nối firewall bị chặn gần đây × 2)
+          - min(15, số cảnh báo ransomware đang theo dõi × 15)
+          - min(10, số thiết bị USB lạ chưa xử lý × 5)
+          - min(10, số lỗ hổng phần mềm nghiêm trọng chưa vá × 2)
+          - (10 nếu real-time protection đang tắt)
+          - (5 nếu CSDL virus quá hạn cập nhật)
+```
+
+Công thức cụ thể ở trên chỉ là một điểm khởi đầu hợp lý, không phải con số cần giữ nguyên tuyệt đối, giá trị thật nằm ở nguyên tắc: mỗi thành phần có trần trừ điểm riêng, và các mục ảnh hưởng tới an toàn nền tảng (real-time protection tắt, CSDL quá hạn) luôn trừ điểm bất kể có phát hiện gì hay không, vì đó là rủi ro tồn tại ngay cả khi chưa có threat cụ thể nào xuất hiện.
+
+Màn hình chính chỉ hiển thị con số tổng hợp này cùng một nhãn định tính (An toàn / Cần chú ý / Rủi ro cao theo ngưỡng điểm), kèm nút "Xem chi tiết" dẫn tới màn hình liệt kê từng mục đang trừ điểm, giữ màn hình chính đơn giản cho phần lớn người dùng chỉ cần biết "máy mình ổn không", trong khi vẫn giữ đường dẫn tới thông tin đầy đủ cho người dùng muốn hiểu rõ nguyên nhân.
+
+## Xử lý khi nhiều lớp bảo vệ cùng phát hiện một sự kiện
+
+Firewall, anti-ransomware, sandbox và anti-phishing đều có thể cùng lúc gắn cờ sự kiện liên quan tới cùng một file hoặc tiến trình, một file tải về đáng ngờ có thể vừa bị scan engine gắn `Suspicious`, vừa kích hoạt kết nối mạng bị firewall chặn, vừa được đưa vào sandbox và trả về `Malicious` vài phút sau. Không xử lý đúng, người dùng nhận bốn thông báo riêng lẻ cho cùng một sự việc.
+
+Thiết kế một event bus nội bộ trong service nền: mọi module publish sự kiện theo schema chung tối thiểu `{ entity_key, source_engine, severity, timestamp }`, trong đó `entity_key` là hash file (nếu sự kiện gắn với file) hoặc cặp (PID, thời điểm tạo tiến trình) nếu gắn với tiến trình đang chạy, dùng thời điểm tạo tiến trình kèm PID vì PID có thể bị tái sử dụng sau khi tiến trình cũ kết thúc.
+
+```c
+typedef struct {
+    char entity_key[64];
+    char source_engine[32];
+    int severity;           // 0-100
+    uint64_t timestamp;
+} CorrelationEvent;
+
+void OnEventReceived(CorrelationEvent* evt) {
+    EntityState* state = FindOrCreateEntityState(evt->entity_key);
+    state->max_severity = max(state->max_severity, evt->severity);
+    AppendSourceEngine(state, evt->source_engine);
+    state->last_update = evt->timestamp;
+
+    if (!state->notification_sent || evt->severity > state->last_notified_severity) {
+        ShowOrUpdateUnifiedNotification(state);
+    }
+}
+```
+
+Điểm quan trọng nhất không nằm ở việc gộp sự kiện đến cùng lúc, mà ở việc không đóng entity quá sớm, sandbox có thể mất vài phút để trả kết quả trong khi scan engine trả lời trong vài trăm mili giây, một cửa sổ thời gian cố định ngắn sẽ bỏ lỡ việc gộp các sự kiện đến lệch nhau xa. Thay vào đó, giữ một bảng trạng thái entity đang mở cho tới khi tất cả module liên quan đã trả kết quả hoặc hết timeout riêng của từng loại (scan engine vài trăm mili giây, sandbox vài phút), khi một event mới tới với `entity_key` đã tồn tại trong bảng, dù cách event đầu tiên bao lâu trong giới hạn timeout, vẫn cập nhật vào cùng một thông báo tổng hợp (`ShowOrUpdateUnifiedNotification` cập nhật nội dung thông báo đã hiển thị thay vì tạo thông báo mới) chỉ đóng entity và dọn khỏi bảng trạng thái khi không còn module nào đang xử lý nó.
+
+## Lên lịch quét và tác vụ nền theo thời điểm máy rảnh
+
+Mỗi module mới trong bài này đều có ít nhất một tác vụ nền tốn tài nguyên riêng: sandbox chạy detonation VM, quét lỗ hổng phần mềm đối chiếu CVE, giám sát mạng gia đình quét thiết bị LAN định kỳ, cộng thêm full scan định kỳ đã có từ bài trước, nếu mỗi module tự quyết định lịch chạy độc lập, chúng dễ dàng chồng lên nhau đúng vào thời điểm máy đang bận, nhân đôi đúng vấn đề "quét làm chậm máy" mà phần tối ưu hiệu năng ở bài trước đã giải quyết cho riêng full scan.
+
+Thay vì để từng module tự lên lịch, tập trung việc điều phối vào một task scheduler nội bộ trong service nền: mỗi module đăng ký một tác vụ kèm mức ưu tiên và ràng buộc tài nguyên (CPU-bound, I/O-bound, hay network-bound), scheduler chỉ cho phép chạy đồng thời một số lượng giới hạn tác vụ cùng loại ràng buộc (ví dụ tối đa một tác vụ I/O-bound nặng tại một thời điểm, để full scan và sandbox detonation không cùng tranh chấp đĩa), và toàn bộ tác vụ không khẩn cấp (quét lỗ hổng, giám sát mạng gia đình, full scan định kỳ) chỉ chạy khi đã xác nhận máy đang idle theo cùng tiêu chí `GetLastInputInfo` đã dùng ở bài trước.
+
+```
+TaskRegistration {
+    task_id: string,
+    resource_class: enum { CPU_BOUND, IO_BOUND, NETWORK_BOUND },
+    priority: int,
+    requires_idle: bool,
+    max_duration_before_yield: duration
+}
+```
+
+Trường `max_duration_before_yield` bắt buộc mỗi tác vụ nền phải tự ngắt và nhường lại tài nguyên sau một khoảng thời gian chạy liên tục nhất định (ví dụ 5 phút), kể cả khi chưa xong việc, tránh trường hợp một tác vụ chạy dài (quét lỗ hổng trên máy có rất nhiều phần mềm cài đặt) chiếm giữ tài nguyên liên tục ngay cả khi người dùng bắt đầu thao tác trở lại giữa chừng, thay vì phải chờ tác vụ đó tự nhận ra máy hết idle theo đúng chu kỳ kiểm tra của riêng nó.
+
+## Những lỗi thường gặp khi mở rộng tính năng antivirus
+
+**Để mỗi module tự cảnh báo riêng thay vì qua event bus chung.** Đây là lỗi phổ biến nhất khi thêm tính năng mới vào một app đã có sẵn kiến trúc: lập trình viên thêm firewall, thêm sandbox, mỗi cái viết thẳng logic hiển thị notification riêng vì "nhanh hơn tích hợp". Kết quả là người dùng nhận nhiều thông báo rời rạc cho cùng một sự việc, đúng vấn đề mà phần event correlation của bài này tồn tại để giải quyết, thêm module mới mà không đi qua event bus chung là đang tái tạo lại chính vấn đề đã có lời giải.
+
+**Không chia sẻ whitelist theo chữ ký số giữa các module.** Whitelist thực thi, whitelist ghi thư mục quan trọng, whitelist truy cập camera/mic, whitelist quyền truy cập bộ nhớ tiến trình khác, nếu mỗi module tự định nghĩa và quản lý whitelist riêng, một công cụ debug hợp lệ có thể bị chặn ở module này dù đã được cho phép ở module khác, và người dùng phải tự thêm ngoại lệ nhiều lần cho cùng một phần mềm. Whitelist theo chữ ký số nên là một dịch vụ dùng chung, các module chỉ khác nhau ở tập điều kiện áp dụng, không khác nhau ở cơ chế lưu trữ và tra cứu.
+
+**Đánh giá sai độ ưu tiên giữa các tính năng mở rộng.** Boot-time scan nghe có vẻ "cao cấp" và ấn tượng để quảng cáo, nhưng đầu tư xây nó trước khi hoàn thiện anti-ransomware hay exploit protection là đặt công sức sai chỗ, phần lớn người dùng gặp rủi ro thật từ ransomware, phishing, hay USB nhiễm mã độc nhiều hơn nhiều so với rootkit ẩn sâu tới mức cần boot-time scan mới phát hiện được.
+
+**Bật mọi tính năng giám sát ở mức chặn cứng ngay từ bản đầu.** Ransomware detection, process hollowing detection, exploit protection đều có khả năng false positive thật với công cụ hợp lệ (phần mềm mã hóa, trình debug, công cụ quản trị hệ thống). Áp dụng đúng nguyên tắc log-only trước khi enforce đã có ở bài trước cho từng module mới, không giả định module mới "chắc chắn đúng" chỉ vì logic phát hiện nghe hợp lý trên giấy.
+
+## Kết luận
+
+Bạn giờ có kiến trúc cụ thể cho tám lớp bảo vệ mở rộng, mỗi lớp tái sử dụng đúng hạ tầng đã xây ở bài trước (whitelist chữ ký số, minifilter, filter communication port) thay vì dựng lại từ đầu, cùng cơ chế event bus để gộp cảnh báo thành một trải nghiệm duy nhất. Ưu tiên xây theo đúng thứ tự giá trị thực tế cho người dùng: firewall, anti-ransomware, sandbox, anti-phishing và exploit protection trước, boot-time scan sau cùng, vì rủi ro phần lớn người dùng gặp phải đến từ nhóm đầu nhiều hơn hẳn.

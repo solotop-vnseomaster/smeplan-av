@@ -1,0 +1,9 @@
+{
+  "name": "com.smeplanav.native_host",
+  "description": "Cau noi kiem tra URL voi service nen SMEPlan AV",
+  "path": "C:\\Program Files\\SMEPlan AV\\native_host.exe",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://<EXTENSION_ID_SE_DIEN_KHI_DANG_KY_THAT>/"
+  ]
+}

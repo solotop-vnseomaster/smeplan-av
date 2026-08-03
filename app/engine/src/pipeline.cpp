@@ -1,0 +1,370 @@
+// Trien khai cac ham xuat trong scan_engine.h.
+// Pipeline dung dung thu tu tang chi phi trong flows/11-luong-xu-ly.md muc
+// "Luong quet file trong scan engine": hash SHA-256 -> YARA -> heuristic,
+// dung ngay khi co ket luan du chac chan (business-rules/05).
+#define SCANENGINE_EXPORTS
+#include "../include/scan_engine.h"
+#include "sha256.h"
+#include "signature_db.h"
+#include "heuristic.h"
+#include "yara_dynamic.h"
+#include "win32_path_util.h"
+
+#include <windows.h>
+#include <memory>
+#include <mutex>
+#include <shared_mutex>
+#include <cstring>
+#include <cstdio>
+
+namespace {
+// [SUA LOI NGHIEM TRONG] Truoc day RunPipeline/Engine_ScanFile doc
+// g_sig_db/g_yara/g_heuristic KHONG khoa mutex nao, trong khi
+// Engine_Initialize/Engine_Shutdown ghi de (reset) cac unique_ptr nay CO
+// khoa. UpdateClientService goi lai Engine_Initialize() sau MOI lan cap
+// nhat CSDL thanh cong (moi 1-4 gio, hoac khi bam "Kiem tra ngay"); neu
+// dung luc do co mot luong khac dang chay RunPipeline (Downloads watcher
+// hoac Full Scan dang quet song song — hoan toan co the trung thoi diem),
+// doc mot std::unique_ptr trong khi thread khac ghi de no la data race
+// (UB), co the doc con tro nua-huy/da-huy -> dereference vung nho da
+// unmap -> crash tien trinh service. Sua: dung std::shared_mutex — cac
+// luong QUET (doc) lay shared_lock (chay song song voi nhau binh thuong),
+// cac thao tac NAP LAI (ghi) lay unique_lock (doc quyen, chan cac luong
+// dang quet cho toi khi nap xong).
+std::shared_mutex g_state_mutex;
+std::unique_ptr<SignatureDb> g_sig_db;
+std::unique_ptr<YaraEngine> g_yara;
+std::unique_ptr<HeuristicEngine> g_heuristic;
+bool g_initialized = false;
+
+void CopyReason(ScanResult* out, const char* text) {
+    strncpy_s(out->reason, sizeof(out->reason), text, _TRUNCATE);
+}
+
+// [DEDUPE] Truoc day khoi "tra CSDL hash -> neu khop, gan verdict=Malicious/
+// stage=HashSignature/threat_id/severity" duoc LAP LAI y het o hai noi:
+// RunPipeline (buoc 1, hash tinh tren buffer trong bo nho) va Engine_ScanFile
+// (nhanh file lon hon 64MB, hash tinh rieng qua Sha256::FileSha256 streaming
+// tren TOAN BO file — mot gia tri hash KHAC voi hash cua buffer da cat bot,
+// nen khong the gop lam MOT lan tra CSDL duy nhat, nhung PHAN AP DUNG ket
+// qua tra duoc thi giong het nhau). Gop phan do vao ham dung chung nay de
+// hai noi khong the lech nhau khi sua (vi du quen cap nhat mot trong hai
+// khi doi cau reason hoac them truong moi vao ScanResult).
+bool TryApplyHashSignatureMatch(const uint8_t digest[32], ScanResult* out, const char* reason) {
+    if (!g_sig_db) return false;
+    auto rec = g_sig_db->Lookup(digest);
+    if (!rec.has_value()) return false;
+
+    out->verdict = ScanVerdict_Malicious;
+    out->stage = DetectionStage_HashSignature;
+    out->threat_id = rec->threat_id;
+    out->severity = rec->severity;
+    CopyReason(out, reason);
+    return true;
+}
+
+// [PHAN LOAI LOI — theo yeu cau phan tich nguyen nhan ScanError that su]
+// Truoc day moi loi mo file deu tra ve mot chuoi chung chung
+// "Khong mo duoc file (bi khoa hoac hong)" — khong the biet duoc mot
+// ScanError la do file dang bi khoa boi tien trinh khac, do thieu quyen
+// (file he thong duoc TrustedInstaller/WRP bao ve), hay do gioi han
+// duong dan. Ham nay doc GetLastError() that va gan mot MA LOI dang
+// "[MA_LOI]" o dau chuoi reason de tang UI co the gom nhom/thong ke theo
+// loai (xem app.js phan renderFlaggedItems/errorBreakdown).
+void CopyClassifiedIoError(ScanResult* out, const char* context) {
+    DWORD err = GetLastError();
+    const char* code;
+    char detail[192];
+
+    switch (err) {
+        case ERROR_SHARING_VIOLATION:
+            code = "SHARING_VIOLATION";
+            sprintf_s(detail, "File dang duoc mot tien trinh khac khoa doc/ghi doc quyen (dang chay/dang duoc su dung) - %s", context);
+            break;
+        case ERROR_ACCESS_DENIED:
+            code = "ACCESS_DENIED";
+            sprintf_s(detail, "Khong du quyen doc file - thuong la file he thong duoc TrustedInstaller/Windows Resource Protection bao ve - %s", context);
+            break;
+        case ERROR_FILE_NOT_FOUND:
+        case ERROR_PATH_NOT_FOUND:
+            code = "NOT_FOUND";
+            sprintf_s(detail, "File/duong dan khong con ton tai (co the da bi xoa hoac di chuyen giua luc liet ke va luc quet) - %s", context);
+            break;
+        case ERROR_FILENAME_EXCED_RANGE:
+            code = "PATH_TOO_LONG";
+            sprintf_s(detail, "Duong dan vuot gioi han he thong ngay ca sau khi da them tien to long-path - %s", context);
+            break;
+        case 0:
+            code = "UNKNOWN";
+            sprintf_s(detail, "Khong doc duoc thong tin loi cu the - %s", context);
+            break;
+        default:
+            code = "WIN32";
+            sprintf_s(detail, "Loi Win32 ma %lu - %s", static_cast<unsigned long>(err), context);
+            break;
+    }
+
+    char full[256];
+    sprintf_s(full, "[%s] %s", code, detail);
+    CopyReason(out, full);
+}
+
+// Nhom file duoc chan dong bo theo phan mo rong / magic bytes 'MZ' (ERR-RT-01
+// trong errors/10-so-tay-loi.md: "chi chan dong bo nhom file co kha nang
+// thuc thi truc tiep").
+//
+// [SUA COMMENT SAI SU THAT] Comment cu o day tung ghi "dat trong engine de
+// DUNG CHUNG logic, tranh lech giua cac noi goi" — SAI: driver kernel-mode
+// (app/drivers/minifilter/minifilter.c, ham SmePlanAvMfIsExecutableCandidate + mang
+// gExecutableExtensions) chay trong dia chi kernel, VE MAT KY THUAT KHONG
+// THE goi vao ham C++ user-mode nay (khac hoan toan dia chi/che do thuc
+// thi) — day KHONG PHAI mot ham "dung chung" thuc su, ma la HAI BAN SAO
+// doc lap CUNG mot danh sach duoi (hien dang trung nhau: .exe/.dll/.ps1/
+// .bat/.scr/.cmd/.vbs/.js). Neu sua danh sach nay o MOT noi ma quen noi
+// kia, hai tang bao ve (real-time watcher user-mode qua ham nay, va
+// SmePlanAvMfPreCreateCallback kernel-mode qua gExecutableExtensions) se LECH NHAU
+// ma khong co canh bao bien dich nao bao hieu — phai sua ca hai noi THU
+// CONG moi khi thay doi danh sach duoi thuc thi.
+bool IsExecutableCandidateInternal(const uint8_t* data, size_t length, const wchar_t* path) {
+    if (length >= 2 && data[0] == 'M' && data[1] == 'Z') return true;
+    if (!path) return false;
+    const wchar_t* dot = wcsrchr(path, L'.');
+    if (!dot) return false;
+    static const wchar_t* kExts[] = { L".exe", L".dll", L".ps1", L".bat", L".scr", L".cmd", L".vbs", L".js" };
+    for (auto ext : kExts) {
+        if (_wcsicmp(dot, ext) == 0) return true;
+    }
+    return false;
+}
+
+void RunPipeline(const uint8_t* data, size_t length, const wchar_t* path_for_ext_check,
+                  ScanResult* out) {
+    memset(out, 0, sizeof(ScanResult));
+    out->verdict = ScanVerdict_ScanError;
+    out->stage = DetectionStage_IoError;
+
+    uint8_t digest[32];
+    Sha256 hasher;
+    hasher.Update(data, length);
+    hasher.Final(digest);
+    std::string hex = Sha256::ToHex(digest);
+    strncpy_s(out->sha256_hex, sizeof(out->sha256_hex), hex.c_str(), _TRUNCATE);
+
+    // Buoc 1: tra CSDL hash cuc bo.
+    {
+        if (TryApplyHashSignatureMatch(digest, out,
+                "Khop CSDL signature (hash SHA-256) - ket luan ngay, khong chay YARA/heuristic")) {
+            return;
+        }
+    }
+
+    uint32_t score = 0;
+
+    // Buoc 2 (neu khong khop CSDL hash): chay rule YARA neu co san.
+    //
+    // [DEAD CODE — xem yara_dynamic.cpp] Nhanh "high_severity -> Malicious
+    // ngay" duoi day KHONG BAO GIO dung trong cau hinh hien tai, vi
+    // YaraCallbackTrampoline luon tra severity_meta = 0 (chua doc duoc meta
+    // that tu YR_RULE khi thieu yara.h that). Moi rule YARA khop hien chi
+    // cong diem heuristic. PHAI sua YaraCallbackTrampoline truoc khi coi
+    // day la tinh nang hoan thien.
+    if (g_yara && g_yara->IsAvailable()) {
+        std::vector<YaraMatch> matches;
+        if (g_yara->ScanBuffer(data, length, matches) && !matches.empty()) {
+            bool high_severity = false;
+            for (const auto& m : matches) {
+                if (m.severity_meta >= 150) { high_severity = true; break; }
+            }
+            if (high_severity) {
+                out->verdict = ScanVerdict_Malicious;
+                out->stage = DetectionStage_Yara;
+                CopyReason(out, "Khop rule YARA severity cao - ket luan Malicious ngay");
+                return;
+            }
+            // severity thap (hoac khong doc duoc meta severity qua callback toi gian) -> cong diem.
+            score += 40 * static_cast<uint32_t>(matches.size());
+        }
+    }
+
+    // Buoc 3 (neu van chua ket luan): heuristic.
+    HeuristicResult hres = g_heuristic ? g_heuristic->Analyze(data, length)
+                                        : HeuristicResult{};
+    score += hres.score;
+    out->heuristic_score = score;
+
+    if (score >= (g_heuristic ? g_heuristic->Threshold() : 100)) {
+        out->verdict = ScanVerdict_Suspicious;
+        out->stage = DetectionStage_Heuristic;
+        CopyReason(out, "Vuot nguong diem heuristic tong hop (entropy/IAT/entry-point) - can nguoi dung/quy trinh xac nhan them");
+        return;
+    }
+
+    out->verdict = ScanVerdict_Clean;
+    out->stage = DetectionStage_None;
+    CopyReason(out, "Khong phat hien qua ca ba buoc hash/YARA/heuristic");
+}
+}
+
+extern "C" {
+
+SCANENGINE_API int Engine_Initialize(const wchar_t* signature_db_path,
+                                      const wchar_t* yara_rules_dir,
+                                      double bloom_false_positive_rate) {
+    std::unique_lock<std::shared_mutex> lock(g_state_mutex);
+    (void)bloom_false_positive_rate; // da co hieu luc luc build CSDL (Engine_BuildSignatureDb)
+
+    g_sig_db = std::make_unique<SignatureDb>();
+    if (signature_db_path && !g_sig_db->Load(signature_db_path)) {
+        g_sig_db.reset(); // khong co CSDL van chay duoc (chi mat nhanh phat hien hash)
+    }
+
+    g_yara = std::make_unique<YaraEngine>();
+    if (yara_rules_dir && g_yara->IsAvailable()) {
+        g_yara->LoadRules(yara_rules_dir);
+    }
+
+    g_heuristic = std::make_unique<HeuristicEngine>(100);
+    g_initialized = true;
+    return 0;
+}
+
+SCANENGINE_API void Engine_Shutdown(void) {
+    std::unique_lock<std::shared_mutex> lock(g_state_mutex);
+    g_sig_db.reset();
+    g_yara.reset();
+    g_heuristic.reset();
+    g_initialized = false;
+}
+
+// [SUA LOI NGHIEM TRONG] Xem scan_engine.h — goi truoc khi doi ten file
+// CSDL (File.Move/MoveFileEx) de giai phong view memory-map dang hoat
+// dong; Windows tu choi rename/xoa mot file con dang co user-mapped
+// section (ERROR_ACCESS_DENIED/ERROR_USER_MAPPED_FILE) bat ke handle co
+// FILE_SHARE_DELETE hay khong.
+SCANENGINE_API void Engine_UnmapSignatureDb(void) {
+    std::unique_lock<std::shared_mutex> lock(g_state_mutex);
+    g_sig_db.reset();
+}
+
+SCANENGINE_API int Engine_LoadSignatureDb(const wchar_t* signature_db_path) {
+    std::unique_lock<std::shared_mutex> lock(g_state_mutex);
+    auto new_db = std::make_unique<SignatureDb>();
+    if (!signature_db_path || !new_db->Load(signature_db_path)) {
+        g_sig_db.reset();
+        return -1;
+    }
+    g_sig_db = std::move(new_db);
+    return 0;
+}
+
+SCANENGINE_API int Engine_ScanFile(const wchar_t* file_path, ScanResult* out_result) {
+    if (!out_result) return -1;
+    memset(out_result, 0, sizeof(ScanResult));
+
+    // [SUA LOI] Them tien to long-path ("\\?\") — CreateFileW tho gioi han
+    // MAX_PATH (260 ky tu), trong khi thu muc WinSxS cua Windows
+    // (C:\Windows\WinSxS\...) va nhieu duong dan node_modules/cache sau
+    // thuong VUOT gioi han nay. Day rat co the la nguyen nhan chinh gay
+    // phan lon ScanError khi full scan quet qua C:\Windows.
+    std::wstring long_path = ToLongPath(file_path);
+
+    HANDLE h = CreateFileW(long_path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                            OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    if (h == INVALID_HANDLE_VALUE) {
+        out_result->verdict = ScanVerdict_ScanError;
+        out_result->stage = DetectionStage_IoError;
+        CopyClassifiedIoError(out_result, "khong mo duoc file de quet - KHONG duoc coi la Clean");
+        return 0;
+    }
+
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(h, &size)) {
+        DWORD err = GetLastError();
+        CloseHandle(h);
+        out_result->verdict = ScanVerdict_ScanError;
+        out_result->stage = DetectionStage_IoError;
+        SetLastError(err);
+        CopyClassifiedIoError(out_result, "khong doc duoc kich thuoc file");
+        return 0;
+    }
+
+    // Gioi han doc vao RAM cho ban tham chieu nay (64MB) de tranh cap phat
+    // qua lon trong 1 lan quet dong bo; file lon hon van duoc hash day du
+    // (Sha256::FileSha256 doc streaming) nhung phan phan tich PE/heuristic
+    // chi chay tren phan dau file trong gioi han nay.
+    constexpr uint64_t kMaxInMemory = 64ULL * 1024 * 1024;
+    size_t to_read = static_cast<size_t>(size.QuadPart < static_cast<LONGLONG>(kMaxInMemory)
+                                              ? size.QuadPart : kMaxInMemory);
+    std::vector<uint8_t> buffer(to_read);
+    DWORD read = 0;
+    BOOL ok = to_read == 0 ? TRUE : ReadFile(h, buffer.data(), static_cast<DWORD>(to_read), &read, nullptr);
+    DWORD read_err = ok ? 0 : GetLastError();
+    CloseHandle(h);
+    if (!ok) {
+        out_result->verdict = ScanVerdict_ScanError;
+        out_result->stage = DetectionStage_IoError;
+        SetLastError(read_err);
+        CopyClassifiedIoError(out_result, "loi doc noi dung file");
+        return 0;
+    }
+    buffer.resize(read);
+
+    // Shared_lock: nhieu luong QUET duoc chay song song voi nhau, chi bi
+    // chan khi co mot luong dang NAP LAI CSDL (unique_lock, xem
+    // Engine_Initialize/Engine_LoadSignatureDb).
+    std::shared_lock<std::shared_mutex> lock(g_state_mutex);
+
+    if (static_cast<uint64_t>(size.QuadPart) > kMaxInMemory) {
+        // File lon hon gioi han doc trong bo nho: hash toan bo file bang
+        // duong streaming rieng de dam bao ket qua hash dung, van chay
+        // YARA/heuristic tren phan dau da doc.
+        uint8_t digest[32];
+        if (Sha256::FileSha256(file_path, digest)) {
+            RunPipeline(buffer.data(), buffer.size(), file_path, out_result);
+            std::string hex = Sha256::ToHex(digest);
+            strncpy_s(out_result->sha256_hex, sizeof(out_result->sha256_hex), hex.c_str(), _TRUNCATE);
+            // Tra lai CSDL bang hash TOAN BO file (khac hash cua buffer da
+            // cat bot ma RunPipeline vua dung o tren) — dung chung ham voi
+            // buoc 1 cua RunPipeline (xem TryApplyHashSignatureMatch).
+            TryApplyHashSignatureMatch(digest, out_result,
+                "Khop CSDL signature (hash SHA-256 tinh tren toan bo file)");
+            return 0;
+        }
+    }
+
+    RunPipeline(buffer.data(), buffer.size(), file_path, out_result);
+    return 0;
+}
+
+SCANENGINE_API int Engine_ScanBuffer(const uint8_t* data, size_t length,
+                                      const char* virtual_name, ScanResult* out_result) {
+    if (!out_result || (!data && length > 0)) return -1;
+    (void)virtual_name;
+    std::shared_lock<std::shared_mutex> lock(g_state_mutex);
+    RunPipeline(data, length, nullptr, out_result);
+    return 0;
+}
+
+SCANENGINE_API int Engine_BuildSignatureDb(const wchar_t* csv_path, const wchar_t* out_db_path) {
+    return SignatureDb::BuildFromCsv(csv_path, out_db_path, 0.001) ? 0 : -1;
+}
+
+SCANENGINE_API int Engine_Sha256File(const wchar_t* file_path, char out_hex65[65]) {
+    uint8_t digest[32];
+    if (!Sha256::FileSha256(file_path, digest)) return -1;
+    std::string hex = Sha256::ToHex(digest);
+    strncpy_s(out_hex65, 65, hex.c_str(), _TRUNCATE);
+    return 0;
+}
+
+SCANENGINE_API int Engine_Sha256Buffer(const uint8_t* data, size_t length, char out_hex65[65]) {
+    Sha256 hasher;
+    hasher.Update(data, length);
+    uint8_t digest[32];
+    hasher.Final(digest);
+    std::string hex = Sha256::ToHex(digest);
+    strncpy_s(out_hex65, 65, hex.c_str(), _TRUNCATE);
+    return 0;
+}
+
+} // extern "C"

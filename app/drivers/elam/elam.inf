@@ -1,0 +1,51 @@
+; elam.inf — mau INF cho ELAM driver.
+; [HAN CHE MOI TRUONG] Tham khao cau hinh, chua dung de dong goi that.
+; DriverVer/CatalogFile do build tool + ky Microsoft dien.
+
+[Version]
+Signature   = "$Windows NT$"
+Class       = "ELAMDriver"
+ClassGuid   = {D42EC7B4-EAB9-46e2-9CB1-4A24D3FA5F1F}
+Provider    = %ProviderString%
+DriverVer   = ; do build tool dien tu dong
+CatalogFile = elam.cat
+PnpLockdown = 1
+
+[DestinationDirs]
+DefaultDestDir = 12
+
+[DefaultInstall]
+CopyFiles = Elam.DriverFiles
+
+[DefaultInstall.Services]
+AddService = %ServiceName%,0x00000002,Elam.Service ; SPSVCINST_ASSOCSERVICE
+
+[DefaultUninstall]
+DelFiles = Elam.DriverFiles
+
+[DefaultUninstall.Services]
+DelService = %ServiceName%,0x200
+
+[Elam.Service]
+DisplayName    = %ServiceName%
+Description    = %ServiceDescription%
+ServiceBinary  = %12%\%DriverName%.sys
+ServiceType    = 1     ; SERVICE_KERNEL_DRIVER
+StartType      = 0     ; SERVICE_BOOT_START
+ErrorControl   = 3     ; SERVICE_ERROR_CRITICAL — that bai ELAM la nghiem trong
+
+[Elam.DriverFiles]
+%DriverName%.sys
+
+[SourceDisksFiles]
+elam.sys = 1
+
+[SourceDisksNames]
+1 = %DiskId1%,,,
+
+[Strings]
+ProviderString     = "SmePlanAv"
+ServiceName        = "SmePlanAvElam"
+ServiceDescription = "SmePlanAv Early Launch Antimalware"
+DriverName         = "elam"
+DiskId1            = "SmePlanAv ELAM Installation Disk"

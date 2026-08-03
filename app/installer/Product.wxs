@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Product.wxs — installer WiX Toolset (v4 schema) cho SmePlanAv.
+  [HAN CHE MOI TRUONG] File nay la MA NGUON THAM CHIEU, CHUA duoc build
+  thanh .msi trong phien lam viec nay vi:
+    - Khong co WiX Toolset CLI cai dat trong moi truong nay.
+    - Cac file driver .sys chua ton tai (chua bien dich duoc, xem
+      app/drivers/README.md) nen khong co gi de dong goi vao MSI thuc su.
+    - Installer phai duoc ky bang CUNG EV Code Signing Certificate da ky
+      driver (modules/02-kien-truc.md muc 2) — chua co certificate that.
+
+  Khi da co du dieu kien (driver da ky qua Microsoft, co EV cert), build
+  bang: wix build Product.wxs -ext WixToolset.Util.wixext -o SmePlanAvSetup.msi
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="SmePlanAv Antivirus"
+           Manufacturer="SmePlanAv"
+           Version="1.0.0.0"
+           UpgradeCode="8f2b6b1a-2f3a-4b7e-9c1a-6e2d5f7a9b10"
+           Compressed="yes">
+
+    <MajorUpgrade DowngradeErrorMessage="Mot phien ban moi hon cua SmePlanAv da duoc cai dat." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Yeu cau quyen Administrator de cai driver kernel-mode -->
+    <Property Id="MSIUSEREALADMINDETECTION" Value="1" />
+
+    <Feature Id="MainFeature" Title="SmePlanAv Antivirus" Level="1">
+      <ComponentGroupRef Id="ServiceComponents" />
+      <ComponentGroupRef Id="ShellComponents" />
+      <ComponentGroupRef Id="DriverComponents" />
+    </Feature>
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="SmePlanAv">
+        <Directory Id="SERVICEDIR" Name="Service" />
+        <Directory Id="SHELLDIR" Name="Shell" />
+        <Directory Id="DRIVERDIR" Name="Drivers" />
+      </Directory>
+    </StandardDirectory>
+
+    <!-- Service nen: cai dat + dang ky nhu mot Windows Service (SYSTEM, boot/auto start) -->
+    <ComponentGroup Id="ServiceComponents" Directory="SERVICEDIR">
+      <Component Id="ServiceExe" Guid="*">
+        <File Id="ServiceExeFile" Source="..\service\Service\bin\Release\net9.0-windows\Antivirus.Service.exe" KeyPath="yes" />
+        <ServiceInstall
+          Id="SmePlanAvServiceInstall"
+          Name="SmePlanAvService"
+          DisplayName="SmePlanAv Antivirus Service"
+          Description="Dieu phoi phat hien/chan mã doc, chay quyen SYSTEM (modules/02-kien-truc.md)."
+          Type="ownProcess"
+          Start="auto"
+          Account="LocalSystem"
+          ErrorControl="normal" />
+        <ServiceControl Id="SmePlanAvServiceControl" Name="SmePlanAvService" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Shell UI (WPF + WebView2) -->
+    <ComponentGroup Id="ShellComponents" Directory="SHELLDIR">
+      <Component Id="ShellExe" Guid="*">
+        <File Id="ShellExeFile" Source="..\ui\Shell\bin\Release\net9.0-windows\AntivirusApp.exe" KeyPath="yes" />
+        <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="SmePlanAv Antivirus"
+                   WorkingDirectory="SHELLDIR" Advertise="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Driver kernel-mode: minifilter + ELAM. Trien khai that can dung
+         DifxApp/PnPUtil de cai + dang ky boot-start; day la placeholder
+         cau truc, KHONG co file .sys/.cat that di kem (chua bien dich). -->
+    <ComponentGroup Id="DriverComponents" Directory="DRIVERDIR">
+      <Component Id="MiniFilterDriver" Guid="*">
+        <File Id="MiniFilterInf" Source="..\drivers\minifilter\minifilter.inf" KeyPath="yes" />
+        <!-- CustomAction goi pnputil /add-driver de cai .inf sau khi da ky -->
+      </Component>
+      <Component Id="ElamDriver" Guid="*">
+        <File Id="ElamInf" Source="..\drivers\elam\elam.inf" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+  </Package>
+</Wix>

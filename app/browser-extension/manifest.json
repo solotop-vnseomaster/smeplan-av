@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "SMEPlan AV - Chong Phishing",
+  "version": "1.0.0",
+  "description": "Kiem tra URL truoc khi trang tai, canh bao neu la trang phishing da biet (SMEPlan AV).",
+  "permissions": ["webNavigation", "nativeMessaging"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["warning.html"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

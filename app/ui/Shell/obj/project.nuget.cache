@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "dgSpecHash": "yHT+qRgbP9I=",
+  "success": true,
+  "projectFilePath": "C:\\SMEPlan Antivirut\\app\\ui\\Shell\\Shell.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\Admin\\.nuget\\packages\\microsoft.web.webview2\\1.0.2739.15\\microsoft.web.webview2.1.0.2739.15.nupkg.sha512"
+  ],
+  "logs": []
+}

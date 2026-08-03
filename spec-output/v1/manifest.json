@@ -1,0 +1,92 @@
+{
+  "bundle_id": "build-pc-antivirus-app-v1-20260801223957",
+  "system_slug": "pc-antivirus-app",
+  "spec_version": "v1",
+  "created_at": "2026-08-01T15:42:01.072342+00:00",
+  "files": [
+    {
+      "relpath": "modules/01-tong-quan.md",
+      "kind": "overview",
+      "title": "Tổng quan",
+      "sha256": "cbad62dbe3a9f4ecfa866cf001722539d49535c2f743f753bb73f307325c5d67",
+      "bytes": 11424
+    },
+    {
+      "relpath": "modules/02-kien-truc.md",
+      "kind": "architecture",
+      "title": "Kiến trúc",
+      "sha256": "3c4352843b554931db565e295dea5c6a8e61090a7e4102e0d82da1206fa44cc1",
+      "bytes": 15640
+    },
+    {
+      "relpath": "apis/03-api.md",
+      "kind": "api",
+      "title": "API",
+      "sha256": "5de13bd4e44bcdbf920857f8f5f70dc58cb7af946e6fe1f4d293eeb8c460f897",
+      "bytes": 8632
+    },
+    {
+      "relpath": "data-models/04-du-lieu.md",
+      "kind": "data-model",
+      "title": "Dữ liệu",
+      "sha256": "45239c112e3501de32844d95faaad61f0d89af802e38f7986fe024adaacfc885",
+      "bytes": 10028
+    },
+    {
+      "relpath": "business-rules/05-nghiep-vu.md",
+      "kind": "business-rules",
+      "title": "Business Rules",
+      "sha256": "7382460b5e2b7214b9aa9d7402fee79cc85b9308fffe1e7720b37f5eecd44072",
+      "bytes": 17196
+    },
+    {
+      "relpath": "nfr/06-phi-chuc-nang.md",
+      "kind": "nfr",
+      "title": "Phi chức năng",
+      "sha256": "e1218312bd36e2054c888185815a1218b50962f76532e24b15c39034a5f0e7f8",
+      "bytes": 11053
+    },
+    {
+      "relpath": "tests/07-kiem-thu.md",
+      "kind": "test",
+      "title": "Kiểm thử",
+      "sha256": "320594f71780a330bb35cc9faa9083c9458f17f4b818e333a60ba28b54df8821",
+      "bytes": 12668
+    },
+    {
+      "relpath": "ops/08-trien-khai.md",
+      "kind": "deployment",
+      "title": "Triển khai & Vận hành",
+      "sha256": "00d286fc6c2164114fc0e7adf2da753a5987421e966b6ac18605115da5a58503",
+      "bytes": 13532
+    },
+    {
+      "relpath": "security/09-bao-mat.md",
+      "kind": "security",
+      "title": "Bảo mật & Phân quyền",
+      "sha256": "2332cfb3df8cd7a17b0e78c8c89f227137d0a473246697c53d033a8fa3cadd2e",
+      "bytes": 14808
+    },
+    {
+      "relpath": "errors/10-so-tay-loi.md",
+      "kind": "error-catalog",
+      "title": "Sổ tay lỗi",
+      "sha256": "cfea518a00eda9327f9120d03e48f02ecf3411916413edb709e3232231fd9b85",
+      "bytes": 13211
+    },
+    {
+      "relpath": "flows/11-luong-xu-ly.md",
+      "kind": "sequence-flow",
+      "title": "Luồng xử lý",
+      "sha256": "4657455ae078d5042920d0f74376b713fcc120441c0eb3b97e99138ccc38a358",
+      "bytes": 16517
+    },
+    {
+      "relpath": "00-doi-chieu-cheo.md",
+      "kind": "consistency-check",
+      "title": "Đối chiếu chéo",
+      "sha256": "4fa8f264d7a5cdc8bf0364096318a9c7bcc8e3d76881a63c7ff4c5837a72c168",
+      "bytes": 2273
+    }
+  ]
+}

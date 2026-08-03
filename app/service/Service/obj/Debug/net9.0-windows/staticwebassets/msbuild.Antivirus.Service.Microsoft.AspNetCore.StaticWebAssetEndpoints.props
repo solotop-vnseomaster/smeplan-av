@@ -1,0 +1,40 @@
+﻿<Project>
+  <ItemGroup>
+    <StaticWebAssetEndpoint Include="_content/Antivirus.Service/css/style.css">
+      <AssetFile>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\staticwebassets\css\style.css'))</AssetFile>
+      <Selectors><![CDATA[[]]]></Selectors>
+      <EndpointProperties><![CDATA[[{"Name":"integrity","Value":"sha256-4Q7dzEscKVhDRJDfwBS71rOlejxa/blHaetT0kspWIw="}]]]></EndpointProperties>
+      <ResponseHeaders><![CDATA[[{"Name":"Accept-Ranges","Value":"bytes"},{"Name":"Cache-Control","Value":"no-cache"},{"Name":"Content-Length","Value":"23744"},{"Name":"Content-Type","Value":"text/css"},{"Name":"ETag","Value":"\u00224Q7dzEscKVhDRJDfwBS71rOlejxa/blHaetT0kspWIw=\u0022"},{"Name":"Last-Modified","Value":"Sun, 02 Aug 2026 13:23:51 GMT"}]]]></ResponseHeaders>
+    </StaticWebAssetEndpoint>
+    <StaticWebAssetEndpoint Include="_content/Antivirus.Service/css/style.xs5a381vjm.css">
+      <AssetFile>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\staticwebassets\css\style.css'))</AssetFile>
+      <Selectors><![CDATA[[]]]></Selectors>
+      <EndpointProperties><![CDATA[[{"Name":"fingerprint","Value":"xs5a381vjm"},{"Name":"integrity","Value":"sha256-4Q7dzEscKVhDRJDfwBS71rOlejxa/blHaetT0kspWIw="},{"Name":"label","Value":"_content/Antivirus.Service/css/style.css"}]]]></EndpointProperties>
+      <ResponseHeaders><![CDATA[[{"Name":"Accept-Ranges","Value":"bytes"},{"Name":"Cache-Control","Value":"max-age=31536000, immutable"},{"Name":"Content-Length","Value":"23744"},{"Name":"Content-Type","Value":"text/css"},{"Name":"ETag","Value":"\u00224Q7dzEscKVhDRJDfwBS71rOlejxa/blHaetT0kspWIw=\u0022"},{"Name":"Last-Modified","Value":"Sun, 02 Aug 2026 13:23:51 GMT"}]]]></ResponseHeaders>
+    </StaticWebAssetEndpoint>
+    <StaticWebAssetEndpoint Include="_content/Antivirus.Service/index.d4rkyyom3b.html">
+      <AssetFile>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\staticwebassets\index.html'))</AssetFile>
+      <Selectors><![CDATA[[]]]></Selectors>
+      <EndpointProperties><![CDATA[[{"Name":"fingerprint","Value":"d4rkyyom3b"},{"Name":"integrity","Value":"sha256-sw9u\u002BbUHpzrMERFe1oA4Xo65JmdLfL7\u002BgUaGw/os0Mw="},{"Name":"label","Value":"_content/Antivirus.Service/index.html"}]]]></EndpointProperties>
+      <ResponseHeaders><![CDATA[[{"Name":"Accept-Ranges","Value":"bytes"},{"Name":"Cache-Control","Value":"max-age=31536000, immutable"},{"Name":"Content-Length","Value":"33584"},{"Name":"Content-Type","Value":"text/html"},{"Name":"ETag","Value":"\u0022sw9u\u002BbUHpzrMERFe1oA4Xo65JmdLfL7\u002BgUaGw/os0Mw=\u0022"},{"Name":"Last-Modified","Value":"Sun, 02 Aug 2026 13:28:14 GMT"}]]]></ResponseHeaders>
+    </StaticWebAssetEndpoint>
+    <StaticWebAssetEndpoint Include="_content/Antivirus.Service/index.html">
+      <AssetFile>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\staticwebassets\index.html'))</AssetFile>
+      <Selectors><![CDATA[[]]]></Selectors>
+      <EndpointProperties><![CDATA[[{"Name":"integrity","Value":"sha256-sw9u\u002BbUHpzrMERFe1oA4Xo65JmdLfL7\u002BgUaGw/os0Mw="}]]]></EndpointProperties>
+      <ResponseHeaders><![CDATA[[{"Name":"Accept-Ranges","Value":"bytes"},{"Name":"Cache-Control","Value":"no-cache"},{"Name":"Content-Length","Value":"33584"},{"Name":"Content-Type","Value":"text/html"},{"Name":"ETag","Value":"\u0022sw9u\u002BbUHpzrMERFe1oA4Xo65JmdLfL7\u002BgUaGw/os0Mw=\u0022"},{"Name":"Last-Modified","Value":"Sun, 02 Aug 2026 13:28:14 GMT"}]]]></ResponseHeaders>
+    </StaticWebAssetEndpoint>
+    <StaticWebAssetEndpoint Include="_content/Antivirus.Service/js/app.h61yb2iwjs.js">
+      <AssetFile>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\staticwebassets\js\app.js'))</AssetFile>
+      <Selectors><![CDATA[[]]]></Selectors>
+      <EndpointProperties><![CDATA[[{"Name":"fingerprint","Value":"h61yb2iwjs"},{"Name":"integrity","Value":"sha256-eY2xutxHKvx28zYvN9xc/i1AZoY3XgWtmbTEmdpffoU="},{"Name":"label","Value":"_content/Antivirus.Service/js/app.js"}]]]></EndpointProperties>
+      <ResponseHeaders><![CDATA[[{"Name":"Accept-Ranges","Value":"bytes"},{"Name":"Cache-Control","Value":"max-age=31536000, immutable"},{"Name":"Content-Length","Value":"50430"},{"Name":"Content-Type","Value":"text/javascript"},{"Name":"ETag","Value":"\u0022eY2xutxHKvx28zYvN9xc/i1AZoY3XgWtmbTEmdpffoU=\u0022"},{"Name":"Last-Modified","Value":"Sun, 02 Aug 2026 22:32:43 GMT"}]]]></ResponseHeaders>
+    </StaticWebAssetEndpoint>
+    <StaticWebAssetEndpoint Include="_content/Antivirus.Service/js/app.js">
+      <AssetFile>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\staticwebassets\js\app.js'))</AssetFile>
+      <Selectors><![CDATA[[]]]></Selectors>
+      <EndpointProperties><![CDATA[[{"Name":"integrity","Value":"sha256-eY2xutxHKvx28zYvN9xc/i1AZoY3XgWtmbTEmdpffoU="}]]]></EndpointProperties>
+      <ResponseHeaders><![CDATA[[{"Name":"Accept-Ranges","Value":"bytes"},{"Name":"Cache-Control","Value":"no-cache"},{"Name":"Content-Length","Value":"50430"},{"Name":"Content-Type","Value":"text/javascript"},{"Name":"ETag","Value":"\u0022eY2xutxHKvx28zYvN9xc/i1AZoY3XgWtmbTEmdpffoU=\u0022"},{"Name":"Last-Modified","Value":"Sun, 02 Aug 2026 22:32:43 GMT"}]]]></ResponseHeaders>
+    </StaticWebAssetEndpoint>
+  </ItemGroup>
+</Project>

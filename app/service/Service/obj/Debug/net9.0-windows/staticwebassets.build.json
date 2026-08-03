@@ -1,0 +1,1042 @@
+{
+  "Version": 1,
+  "Hash": "pxKXw7Q74zZbBpyRYYEUmwAdXpXFas8caIouiimIYgk=",
+  "Source": "Antivirus.Service",
+  "BasePath": "_content/Antivirus.Service",
+  "Mode": "Default",
+  "ManifestType": "Build",
+  "ReferencedProjectsConfiguration": [],
+  "DiscoveryPatterns": [
+    {
+      "Name": "Antivirus.Service\\wwwroot",
+      "Source": "Antivirus.Service",
+      "ContentRoot": "C:\\SMEPlan Antivirut\\app\\service\\Service\\wwwroot\\",
+      "BasePath": "_content/Antivirus.Service",
+      "Pattern": "**"
+    }
+  ],
+  "Assets": [
+    {
+      "Identity": "C:\\SMEPlan Antivirut\\app\\service\\Service\\obj\\Debug\\net9.0-windows\\compressed\\1116aexex0-xs5a381vjm.gz",
+      "SourceId": "Antivirus.Service",
+      "SourceType": "Discovered",
+      "ContentRoot": "C:\\SMEPlan Antivirut\\app\\service\\Service\\obj\\Debug\\net9.0-windows\\compressed\\",
+      "BasePath": "_content/Antivirus.Service",
+      "RelativePath": "css/style#[.{fingerprint=xs5a381vjm}]?.css.gz",
+      "AssetKind": "All",
+      "AssetMode": "All",
+      "AssetRole": "Alternative",
+      "AssetMergeBehavior": "",
+      "AssetMergeSource": "",
+      "RelatedAsset": "C:\\SMEPlan Antivirut\\app\\service\\Service\\wwwroot\\css\\style.css",
+      "AssetTraitName": "Content-Encoding",
+      "AssetTraitValue": "gzip",
+      "Fingerprint": "xzo55f973c",
+      "Integrity": "zR6yDHp0FoxgS6ihmUw/GW3kUy8kitDj5OE0bUC7nqA=",
+      "CopyToOutputDirectory": "Never",
+      "CopyToPublishDirectory": "PreserveNewest",
+      "OriginalItemSpec": "C:\\SMEPlan Antivirut\\app\\service\\Service\\wwwroot\\css\\style.css"
+    },
+    {
+      "Identity": "C:\\SMEPlan Antivirut\\app\\service\\Service\\obj\\Debug\\net9.0-windows\\compressed\\e95dieup9m-d4rkyyom3b.gz",
+      "SourceId": "Antivirus.Service",
+      "SourceType": "Discovered",
+      "ContentRoot": "C:\\SMEPlan Antivirut\\app\\service\\Service\\obj\\Debug\\net9.0-windows\\compressed\\",
+      "BasePath": "_content/Antivirus.Service",
+      "RelativePath": "index#[.{fingerprint=d4rkyyom3b}]?.html.gz",
+      "AssetKind": "All",
+      "AssetMode": "All",
+      "AssetRole": "Alternative",
+      "AssetMergeBehavior": "",
+      "AssetMergeSource": "",
+      "RelatedAsset": "C:\\SMEPlan Antivirut\\app\\service\\Service\\wwwroot\\index.html",
+      "AssetTraitName": "Content-Encoding",
+      "AssetTraitValue": "gzip",
+      "Fingerprint": "ii1j3sxd5z",
+      "Integrity": "arFvlVpayKAV44YCxCXX2nQR4pD9uYGnlxy2KAGcVtY=",
+      "CopyToOutputDirectory": "Never",
+      "CopyToPublishDirectory": "PreserveNewest",
+      "OriginalItemSpec": "C:\\SMEPlan Antivirut\\app\\service\\Service\\wwwroot\\index.html"
+    },
+    {
+      "Identity": "C:\\SMEPlan Antivirut\\app\\service\\Service\\obj\\Debug\\net9.0-windows\\compressed\\ym1g0zpysx-h61yb2iwjs.gz",
+      "SourceId": "Antivirus.Service",
+      "SourceType": "Discovered",
+      "ContentRoot": "C:\\SMEPlan Antivirut\\app\\service\\Service\\obj\\Debug\\net9.0-windows\\compressed\\",
+      "BasePath": "_content/Antivirus.Service",
+      "RelativePath": "js/app#[.{fingerprint=h61yb2iwjs}]?.js.gz",
+      "AssetKind": "All",
+      "AssetMode": "All",
+      "AssetRole": "Alternative",
+      "AssetMergeBehavior": "",
+      "AssetMergeSource": "",
+      "RelatedAsset": "C:\\SMEPlan Antivirut\\app\\service\\Service\\wwwroot\\js\\app.js",
+      "AssetTraitName": "Content-Encoding",
+      "AssetTraitValue": "gzip",
+      "Fingerprint": "cdaewhwfgu",
+      "Integrity": "ABA9oLIVw2aZBzXdjTfoDAI0zbojKDoTITfVqrSD1uM=",
+      "CopyToOutputDirectory": "Never",
+      "CopyToPublishDirectory": "PreserveNewest",
+      "OriginalItemSpec": "C:\\SMEPlan Antivirut\\app\\service\\Service\\wwwroot\\js\\app.js"
+    },
+    {
+      "Identity": "C:\\SMEPlan Antivirut\\app\\service\\Service\\wwwroot\\css\\style.css",
+      "SourceId": "Antivirus.Service",
+      "SourceType": "Discovered",
+      "ContentRoot": "C:\\SMEPlan Antivirut\\app\\service\\Service\\wwwroot\\",
+      "BasePath": "_content/Antivirus.Service",
+      "RelativePath": "css/style#[.{fingerprint}]?.css",
+      "AssetKind": "All",
+      "AssetMode": "All",
+      "AssetRole": "Primary",
+      "AssetMergeBehavior": "",
+      "AssetMergeSource": "",
+      "RelatedAsset": "",
+      "AssetTraitName": "",
+      "AssetTraitValue": "",
+      "Fingerprint": "xs5a381vjm",
+      "Integrity": "4Q7dzEscKVhDRJDfwBS71rOlejxa/blHaetT0kspWIw=",
+      "CopyToOutputDirectory": "Never",
+      "CopyToPublishDirectory": "PreserveNewest",
+      "OriginalItemSpec": "wwwroot\\css\\style.css"
+    },
+    {
+      "Identity": "C:\\SMEPlan Antivirut\\app\\service\\Service\\wwwroot\\index.html",
+      "SourceId": "Antivirus.Service",
+      "SourceType": "Discovered",
+      "ContentRoot": "C:\\SMEPlan Antivirut\\app\\service\\Service\\wwwroot\\",
+      "BasePath": "_content/Antivirus.Service",
+      "RelativePath": "index#[.{fingerprint}]?.html",
+      "AssetKind": "All",
+      "AssetMode": "All",
+      "AssetRole": "Primary",
+      "AssetMergeBehavior": "",
+      "AssetMergeSource": "",
+      "RelatedAsset": "",
+      "AssetTraitName": "",
+      "AssetTraitValue": "",
+      "Fingerprint": "d4rkyyom3b",
+      "Integrity": "sw9u+bUHpzrMERFe1oA4Xo65JmdLfL7+gUaGw/os0Mw=",
+      "CopyToOutputDirectory": "Never",
+      "CopyToPublishDirectory": "PreserveNewest",
+      "OriginalItemSpec": "wwwroot\\index.html"
+    },
+    {
+      "Identity": "C:\\SMEPlan Antivirut\\app\\service\\Service\\wwwroot\\js\\app.js",
+      "SourceId": "Antivirus.Service",
+      "SourceType": "Discovered",
+      "ContentRoot": "C:\\SMEPlan Antivirut\\app\\service\\Service\\wwwroot\\",
+      "BasePath": "_content/Antivirus.Service",
+      "RelativePath": "js/app#[.{fingerprint}]?.js",
+      "AssetKind": "All",
+      "AssetMode": "All",
+      "AssetRole": "Primary",
+      "AssetMergeBehavior": "",
+      "AssetMergeSource": "",
+      "RelatedAsset": "",
+      "AssetTraitName": "",
+      "AssetTraitValue": "",
+      "Fingerprint": "h61yb2iwjs",
+      "Integrity": "eY2xutxHKvx28zYvN9xc/i1AZoY3XgWtmbTEmdpffoU=",
+      "CopyToOutputDirectory": "Never",
+      "CopyToPublishDirectory": "PreserveNewest",
+      "OriginalItemSpec": "wwwroot\\js\\app.js"
+    }
+  ],
+  "Endpoints": [
+    {
+      "Route": "css/style.css",
+      "AssetFile": "C:\\SMEPlan Antivirut\\app\\service\\Service\\obj\\Debug\\net9.0-windows\\compressed\\1116aexex0-xs5a381vjm.gz",
+      "Selectors": [
+        {
+          "Name": "Content-Encoding",
+          "Value": "gzip",
+          "Quality": "0.000150625094"
+        }
+      ],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "6638"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"zR6yDHp0FoxgS6ihmUw/GW3kUy8kitDj5OE0bUC7nqA=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Sun, 02 Aug 2026 13:23:51 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "no-cache"
+        },
+        {
+          "Name": "Content-Encoding",
+          "Value": "gzip"
+        },
+        {
+          "Name": "Vary",
+          "Value": "Content-Encoding"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/css"
+        },
+        {
+          "Name": "ETag",
+          "Value": "W/\"4Q7dzEscKVhDRJDfwBS71rOlejxa/blHaetT0kspWIw=\""
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "integrity",
+          "Value": "sha256-4Q7dzEscKVhDRJDfwBS71rOlejxa/blHaetT0kspWIw="
+        }
+      ]
+    },
+    {
+      "Route": "css/style.css",
+      "AssetFile": "C:\\SMEPlan Antivirut\\app\\service\\Service\\wwwroot\\css\\style.css",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "23744"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/css"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"4Q7dzEscKVhDRJDfwBS71rOlejxa/blHaetT0kspWIw=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Sun, 02 Aug 2026 13:23:51 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "no-cache"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "integrity",
+          "Value": "sha256-4Q7dzEscKVhDRJDfwBS71rOlejxa/blHaetT0kspWIw="
+        }
+      ]
+    },
+    {
+      "Route": "css/style.css.gz",
+      "AssetFile": "C:\\SMEPlan Antivirut\\app\\service\\Service\\obj\\Debug\\net9.0-windows\\compressed\\1116aexex0-xs5a381vjm.gz",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "6638"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/css"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"zR6yDHp0FoxgS6ihmUw/GW3kUy8kitDj5OE0bUC7nqA=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Sun, 02 Aug 2026 13:23:51 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "no-cache"
+        },
+        {
+          "Name": "Content-Encoding",
+          "Value": "gzip"
+        },
+        {
+          "Name": "Vary",
+          "Value": "Content-Encoding"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "integrity",
+          "Value": "sha256-zR6yDHp0FoxgS6ihmUw/GW3kUy8kitDj5OE0bUC7nqA="
+        }
+      ]
+    },
+    {
+      "Route": "css/style.xs5a381vjm.css",
+      "AssetFile": "C:\\SMEPlan Antivirut\\app\\service\\Service\\obj\\Debug\\net9.0-windows\\compressed\\1116aexex0-xs5a381vjm.gz",
+      "Selectors": [
+        {
+          "Name": "Content-Encoding",
+          "Value": "gzip",
+          "Quality": "0.000150625094"
+        }
+      ],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "6638"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"zR6yDHp0FoxgS6ihmUw/GW3kUy8kitDj5OE0bUC7nqA=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Sun, 02 Aug 2026 13:23:51 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "max-age=31536000, immutable"
+        },
+        {
+          "Name": "Content-Encoding",
+          "Value": "gzip"
+        },
+        {
+          "Name": "Vary",
+          "Value": "Content-Encoding"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/css"
+        },
+        {
+          "Name": "ETag",
+          "Value": "W/\"4Q7dzEscKVhDRJDfwBS71rOlejxa/blHaetT0kspWIw=\""
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "fingerprint",
+          "Value": "xs5a381vjm"
+        },
+        {
+          "Name": "label",
+          "Value": "css/style.css"
+        },
+        {
+          "Name": "integrity",
+          "Value": "sha256-4Q7dzEscKVhDRJDfwBS71rOlejxa/blHaetT0kspWIw="
+        }
+      ]
+    },
+    {
+      "Route": "css/style.xs5a381vjm.css",
+      "AssetFile": "C:\\SMEPlan Antivirut\\app\\service\\Service\\wwwroot\\css\\style.css",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "23744"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/css"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"4Q7dzEscKVhDRJDfwBS71rOlejxa/blHaetT0kspWIw=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Sun, 02 Aug 2026 13:23:51 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "max-age=31536000, immutable"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "fingerprint",
+          "Value": "xs5a381vjm"
+        },
+        {
+          "Name": "label",
+          "Value": "css/style.css"
+        },
+        {
+          "Name": "integrity",
+          "Value": "sha256-4Q7dzEscKVhDRJDfwBS71rOlejxa/blHaetT0kspWIw="
+        }
+      ]
+    },
+    {
+      "Route": "css/style.xs5a381vjm.css.gz",
+      "AssetFile": "C:\\SMEPlan Antivirut\\app\\service\\Service\\obj\\Debug\\net9.0-windows\\compressed\\1116aexex0-xs5a381vjm.gz",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "6638"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/css"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"zR6yDHp0FoxgS6ihmUw/GW3kUy8kitDj5OE0bUC7nqA=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Sun, 02 Aug 2026 13:23:51 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "max-age=31536000, immutable"
+        },
+        {
+          "Name": "Content-Encoding",
+          "Value": "gzip"
+        },
+        {
+          "Name": "Vary",
+          "Value": "Content-Encoding"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "fingerprint",
+          "Value": "xs5a381vjm"
+        },
+        {
+          "Name": "label",
+          "Value": "css/style.css.gz"
+        },
+        {
+          "Name": "integrity",
+          "Value": "sha256-zR6yDHp0FoxgS6ihmUw/GW3kUy8kitDj5OE0bUC7nqA="
+        }
+      ]
+    },
+    {
+      "Route": "index.d4rkyyom3b.html",
+      "AssetFile": "C:\\SMEPlan Antivirut\\app\\service\\Service\\obj\\Debug\\net9.0-windows\\compressed\\e95dieup9m-d4rkyyom3b.gz",
+      "Selectors": [
+        {
+          "Name": "Content-Encoding",
+          "Value": "gzip",
+          "Quality": "0.000117054899"
+        }
+      ],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "8542"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"arFvlVpayKAV44YCxCXX2nQR4pD9uYGnlxy2KAGcVtY=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Sun, 02 Aug 2026 13:28:14 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "max-age=31536000, immutable"
+        },
+        {
+          "Name": "Content-Encoding",
+          "Value": "gzip"
+        },
+        {
+          "Name": "Vary",
+          "Value": "Content-Encoding"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/html"
+        },
+        {
+          "Name": "ETag",
+          "Value": "W/\"sw9u+bUHpzrMERFe1oA4Xo65JmdLfL7+gUaGw/os0Mw=\""
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "fingerprint",
+          "Value": "d4rkyyom3b"
+        },
+        {
+          "Name": "label",
+          "Value": "index.html"
+        },
+        {
+          "Name": "integrity",
+          "Value": "sha256-sw9u+bUHpzrMERFe1oA4Xo65JmdLfL7+gUaGw/os0Mw="
+        }
+      ]
+    },
+    {
+      "Route": "index.d4rkyyom3b.html",
+      "AssetFile": "C:\\SMEPlan Antivirut\\app\\service\\Service\\wwwroot\\index.html",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "33584"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/html"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"sw9u+bUHpzrMERFe1oA4Xo65JmdLfL7+gUaGw/os0Mw=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Sun, 02 Aug 2026 13:28:14 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "max-age=31536000, immutable"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "fingerprint",
+          "Value": "d4rkyyom3b"
+        },
+        {
+          "Name": "label",
+          "Value": "index.html"
+        },
+        {
+          "Name": "integrity",
+          "Value": "sha256-sw9u+bUHpzrMERFe1oA4Xo65JmdLfL7+gUaGw/os0Mw="
+        }
+      ]
+    },
+    {
+      "Route": "index.d4rkyyom3b.html.gz",
+      "AssetFile": "C:\\SMEPlan Antivirut\\app\\service\\Service\\obj\\Debug\\net9.0-windows\\compressed\\e95dieup9m-d4rkyyom3b.gz",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "8542"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/html"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"arFvlVpayKAV44YCxCXX2nQR4pD9uYGnlxy2KAGcVtY=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Sun, 02 Aug 2026 13:28:14 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "max-age=31536000, immutable"
+        },
+        {
+          "Name": "Content-Encoding",
+          "Value": "gzip"
+        },
+        {
+          "Name": "Vary",
+          "Value": "Content-Encoding"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "fingerprint",
+          "Value": "d4rkyyom3b"
+        },
+        {
+          "Name": "label",
+          "Value": "index.html.gz"
+        },
+        {
+          "Name": "integrity",
+          "Value": "sha256-arFvlVpayKAV44YCxCXX2nQR4pD9uYGnlxy2KAGcVtY="
+        }
+      ]
+    },
+    {
+      "Route": "index.html",
+      "AssetFile": "C:\\SMEPlan Antivirut\\app\\service\\Service\\obj\\Debug\\net9.0-windows\\compressed\\e95dieup9m-d4rkyyom3b.gz",
+      "Selectors": [
+        {
+          "Name": "Content-Encoding",
+          "Value": "gzip",
+          "Quality": "0.000117054899"
+        }
+      ],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "8542"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"arFvlVpayKAV44YCxCXX2nQR4pD9uYGnlxy2KAGcVtY=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Sun, 02 Aug 2026 13:28:14 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "no-cache"
+        },
+        {
+          "Name": "Content-Encoding",
+          "Value": "gzip"
+        },
+        {
+          "Name": "Vary",
+          "Value": "Content-Encoding"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/html"
+        },
+        {
+          "Name": "ETag",
+          "Value": "W/\"sw9u+bUHpzrMERFe1oA4Xo65JmdLfL7+gUaGw/os0Mw=\""
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "integrity",
+          "Value": "sha256-sw9u+bUHpzrMERFe1oA4Xo65JmdLfL7+gUaGw/os0Mw="
+        }
+      ]
+    },
+    {
+      "Route": "index.html",
+      "AssetFile": "C:\\SMEPlan Antivirut\\app\\service\\Service\\wwwroot\\index.html",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "33584"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/html"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"sw9u+bUHpzrMERFe1oA4Xo65JmdLfL7+gUaGw/os0Mw=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Sun, 02 Aug 2026 13:28:14 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "no-cache"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "integrity",
+          "Value": "sha256-sw9u+bUHpzrMERFe1oA4Xo65JmdLfL7+gUaGw/os0Mw="
+        }
+      ]
+    },
+    {
+      "Route": "index.html.gz",
+      "AssetFile": "C:\\SMEPlan Antivirut\\app\\service\\Service\\obj\\Debug\\net9.0-windows\\compressed\\e95dieup9m-d4rkyyom3b.gz",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "8542"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/html"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"arFvlVpayKAV44YCxCXX2nQR4pD9uYGnlxy2KAGcVtY=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Sun, 02 Aug 2026 13:28:14 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "no-cache"
+        },
+        {
+          "Name": "Content-Encoding",
+          "Value": "gzip"
+        },
+        {
+          "Name": "Vary",
+          "Value": "Content-Encoding"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "integrity",
+          "Value": "sha256-arFvlVpayKAV44YCxCXX2nQR4pD9uYGnlxy2KAGcVtY="
+        }
+      ]
+    },
+    {
+      "Route": "js/app.h61yb2iwjs.js",
+      "AssetFile": "C:\\SMEPlan Antivirut\\app\\service\\Service\\obj\\Debug\\net9.0-windows\\compressed\\ym1g0zpysx-h61yb2iwjs.gz",
+      "Selectors": [
+        {
+          "Name": "Content-Encoding",
+          "Value": "gzip",
+          "Quality": "0.000064926633"
+        }
+      ],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "15401"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"ABA9oLIVw2aZBzXdjTfoDAI0zbojKDoTITfVqrSD1uM=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Sun, 02 Aug 2026 22:32:43 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "max-age=31536000, immutable"
+        },
+        {
+          "Name": "Content-Encoding",
+          "Value": "gzip"
+        },
+        {
+          "Name": "Vary",
+          "Value": "Content-Encoding"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/javascript"
+        },
+        {
+          "Name": "ETag",
+          "Value": "W/\"eY2xutxHKvx28zYvN9xc/i1AZoY3XgWtmbTEmdpffoU=\""
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "fingerprint",
+          "Value": "h61yb2iwjs"
+        },
+        {
+          "Name": "label",
+          "Value": "js/app.js"
+        },
+        {
+          "Name": "integrity",
+          "Value": "sha256-eY2xutxHKvx28zYvN9xc/i1AZoY3XgWtmbTEmdpffoU="
+        }
+      ]
+    },
+    {
+      "Route": "js/app.h61yb2iwjs.js",
+      "AssetFile": "C:\\SMEPlan Antivirut\\app\\service\\Service\\wwwroot\\js\\app.js",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "50430"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/javascript"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"eY2xutxHKvx28zYvN9xc/i1AZoY3XgWtmbTEmdpffoU=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Sun, 02 Aug 2026 22:32:43 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "max-age=31536000, immutable"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "fingerprint",
+          "Value": "h61yb2iwjs"
+        },
+        {
+          "Name": "label",
+          "Value": "js/app.js"
+        },
+        {
+          "Name": "integrity",
+          "Value": "sha256-eY2xutxHKvx28zYvN9xc/i1AZoY3XgWtmbTEmdpffoU="
+        }
+      ]
+    },
+    {
+      "Route": "js/app.h61yb2iwjs.js.gz",
+      "AssetFile": "C:\\SMEPlan Antivirut\\app\\service\\Service\\obj\\Debug\\net9.0-windows\\compressed\\ym1g0zpysx-h61yb2iwjs.gz",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "15401"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/javascript"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"ABA9oLIVw2aZBzXdjTfoDAI0zbojKDoTITfVqrSD1uM=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Sun, 02 Aug 2026 22:32:43 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "max-age=31536000, immutable"
+        },
+        {
+          "Name": "Content-Encoding",
+          "Value": "gzip"
+        },
+        {
+          "Name": "Vary",
+          "Value": "Content-Encoding"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "fingerprint",
+          "Value": "h61yb2iwjs"
+        },
+        {
+          "Name": "label",
+          "Value": "js/app.js.gz"
+        },
+        {
+          "Name": "integrity",
+          "Value": "sha256-ABA9oLIVw2aZBzXdjTfoDAI0zbojKDoTITfVqrSD1uM="
+        }
+      ]
+    },
+    {
+      "Route": "js/app.js",
+      "AssetFile": "C:\\SMEPlan Antivirut\\app\\service\\Service\\obj\\Debug\\net9.0-windows\\compressed\\ym1g0zpysx-h61yb2iwjs.gz",
+      "Selectors": [
+        {
+          "Name": "Content-Encoding",
+          "Value": "gzip",
+          "Quality": "0.000064926633"
+        }
+      ],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "15401"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"ABA9oLIVw2aZBzXdjTfoDAI0zbojKDoTITfVqrSD1uM=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Sun, 02 Aug 2026 22:32:43 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "no-cache"
+        },
+        {
+          "Name": "Content-Encoding",
+          "Value": "gzip"
+        },
+        {
+          "Name": "Vary",
+          "Value": "Content-Encoding"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/javascript"
+        },
+        {
+          "Name": "ETag",
+          "Value": "W/\"eY2xutxHKvx28zYvN9xc/i1AZoY3XgWtmbTEmdpffoU=\""
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "integrity",
+          "Value": "sha256-eY2xutxHKvx28zYvN9xc/i1AZoY3XgWtmbTEmdpffoU="
+        }
+      ]
+    },
+    {
+      "Route": "js/app.js",
+      "AssetFile": "C:\\SMEPlan Antivirut\\app\\service\\Service\\wwwroot\\js\\app.js",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "50430"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/javascript"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"eY2xutxHKvx28zYvN9xc/i1AZoY3XgWtmbTEmdpffoU=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Sun, 02 Aug 2026 22:32:43 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "no-cache"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "integrity",
+          "Value": "sha256-eY2xutxHKvx28zYvN9xc/i1AZoY3XgWtmbTEmdpffoU="
+        }
+      ]
+    },
+    {
+      "Route": "js/app.js.gz",
+      "AssetFile": "C:\\SMEPlan Antivirut\\app\\service\\Service\\obj\\Debug\\net9.0-windows\\compressed\\ym1g0zpysx-h61yb2iwjs.gz",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "15401"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/javascript"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"ABA9oLIVw2aZBzXdjTfoDAI0zbojKDoTITfVqrSD1uM=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Sun, 02 Aug 2026 22:32:43 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "no-cache"
+        },
+        {
+          "Name": "Content-Encoding",
+          "Value": "gzip"
+        },
+        {
+          "Name": "Vary",
+          "Value": "Content-Encoding"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "integrity",
+          "Value": "sha256-ABA9oLIVw2aZBzXdjTfoDAI0zbojKDoTITfVqrSD1uM="
+        }
+      ]
+    }
+  ]
+}

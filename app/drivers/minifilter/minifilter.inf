@@ -1,0 +1,67 @@
+; minifilter.inf — mau INF cho minifilter driver theo dung khuon WDK
+; (ClassGuid cua minifilter: {b1d1a169-c54f-11d2-92a6-00e0921f7f9d}).
+; [HAN CHE MOI TRUONG] File nay la THAM KHAO CAU HINH, chua duoc dung de
+; dong goi driver that trong phien nay (khong co WDK/EV Code Signing
+; Certificate — xem ops/README-known-limitations.md).
+
+[Version]
+Signature   = "$Windows NT$"
+Class       = "FSFilter Anti-Virus"
+ClassGuid   = {b1d1a169-c54f-11d2-92a6-00e0921f7f9d}
+Provider    = %ProviderString%
+DriverVer   = ; do build tool dien tu dong
+CatalogFile = minifilter.cat
+PnpLockdown = 1
+
+[DestinationDirs]
+DefaultDestDir          = 12
+MiniFilter.DriverFiles  = 12
+
+[DefaultInstall]
+OptionDesc  = %ServiceDescription%
+CopyFiles   = MiniFilter.DriverFiles
+
+[DefaultInstall.Services]
+AddService  = %ServiceName%,,MiniFilter.Service
+
+[DefaultUninstall]
+DelFiles = MiniFilter.DriverFiles
+
+[DefaultUninstall.Services]
+DelService = %ServiceName%,0x200
+
+[MiniFilter.Service]
+DisplayName      = %ServiceName%
+Description      = %ServiceDescription%
+ServiceBinary    = %12%\%DriverName%.sys
+Dependencies     = "FltMgr"
+ServiceType      = 2          ; SERVICE_FILE_SYSTEM_DRIVER
+StartType        = 0          ; SERVICE_BOOT_START — chay som tu boot
+ErrorControl     = 1          ; SERVICE_ERROR_NORMAL
+LoadOrderGroup   = "FSFilter Anti-Virus"
+AddReg           = MiniFilter.AddRegistry
+
+[MiniFilter.AddRegistry]
+HKR,,"DebugFlags",0x00010001 ,0x0
+HKR,"Instances","DefaultInstance",0x00000000,%DefaultInstance%
+HKR,"Instances\"%Instance1.Name%,"Altitude",0x00000000,%Instance1.Altitude%
+HKR,"Instances\"%Instance1.Name%,"Flags",0x00010001,0x0
+
+[MiniFilter.DriverFiles]
+%DriverName%.sys
+
+[SourceDisksFiles]
+minifilter.sys = 1
+
+[SourceDisksNames]
+1 = %DiskId1%,,,
+
+[Strings]
+ProviderString      = "SmePlanAv"
+ServiceDescription  = "SmePlanAv Real-time Protection Minifilter"
+ServiceName         = "SmePlanAvMiniFilter"
+DriverName          = "minifilter"
+DiskId1             = "SmePlanAv Minifilter Installation Disk"
+DefaultInstance     = "SmePlanAv Instance"
+Instance1.Name      = "SmePlanAv Instance"
+Instance1.Altitude  = "328000" ; placeholder — dai that phai xin Microsoft
