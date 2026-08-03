@@ -89,6 +89,20 @@ public sealed class UsbRuleStore
         return result;
     }
 
+    // [HAN CHE DA BIET] VendorId/ProductId/SerialNumber o day la du lieu do
+    // CHINH THIET BI USB tu khai bao trong USB descriptor (GET_DESCRIPTOR)
+    // luc enumerate — giao thuc USB KHONG co co che nao de host xac thuc
+    // tinh xac thuc cua cac gia tri nay. Mot thiet bi BadUSB (vi du firmware
+    // bi flash lai, hoac thiet bi HID gia danh) co the tu khai VID/PID/serial
+    // TRUNG KHOP voi mot rule Allow da cau hinh de bypass hoan toan rule
+    // Block/Ask ben duoi — day la gioi han KIEN TRUC cua chinh chuan USB
+    // (thiet bi tu khai bao danh tinh, khong co chu ky/chung thuc phan
+    // cung), khong phai loi logic co the sua o tang phan mem nay. Khong co
+    // fix nao trong ResolvePolicy/UsbRuleStore co the dong hoan toan lo hong
+    // nay; giam thieu thuc su (vi du: whitelist theo lop giao thuc + canh
+    // bao khi mot thiet bi HID/Storage doi vai tro bat thuong) can du lieu
+    // tu tang driver/kernel USB that, hien chua co trong pham vi chay duoc
+    // cua phien nay (xem app/drivers/README.md).
     public UsbDeviceRule ResolvePolicy(string vendorId, string productId, string? serialNumber)
     {
         var all = List();
