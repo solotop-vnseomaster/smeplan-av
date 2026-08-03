@@ -24,6 +24,16 @@ public sealed class PhishingUrlChecker
 
         var host = uri.Host;
 
+        // [SUA LOI NGHIEM TRONG] DNS cho phep mot dau cham "goc" o cuoi FQDN
+        // (vi du "evil.com." — trinh duyet/resolver phan giai HOAN TOAN
+        // giong "evil.com"), nhung uri.Host GIU NGUYEN dau cham nay va
+        // IsDomainListed/IsIpListed ben duoi so sanh chuoi TUYET DOI — URL
+        // "http://evil.com./..." vi vay khong khop bat ky entry nao trong
+        // blocklist (vi du "evil.com"), bypass hoan toan kiem tra du trinh
+        // duyet van mo dung site bi chan. Sua: bo dau cham cuoi truoc khi
+        // so sanh, dung ky thuat evasion pho bien nay khong con tac dung.
+        host = host.TrimEnd('.');
+
         if (Uri.CheckHostName(host) == UriHostNameType.IPv4 || Uri.CheckHostName(host) == UriHostNameType.IPv6)
         {
             if (_store.IsIpListed(host)) return new PhishingCheckResult(true, "ip", host);
