@@ -83,9 +83,31 @@ public sealed class QuarantineManager
             return record;
         }
 
-        MoveIntoQuarantine(originalPath, quarantineId);
+        // [SUA LOI NGHIEM TRONG] TRUOC DAY thu tu la MoveIntoQuarantine() (di
+        // chuyen + xoa file goc) RỒI MỚI _store.Add(record) — neu ghi DB that
+        // bai giua chung (dia day, DB bi khoa, ngoai le bat ky...), file goc
+        // DA BI XOA nhung KHONG CO ban ghi nao theo doi no trong QuarantineStore,
+        // mat dau vet vinh vien (khong the List()/Restore() lai duoc, ke ca
+        // biet ten file .qtn tren dia cung khong the anh xa nguoc ve
+        // OriginalPath). Sua: ghi DB TRUOC (trang thai Quarantined coi nhu
+        // "cam ket" se di chuyen), roi MOI di chuyen file that su; neu buoc
+        // di chuyen that bai, ROLLBACK ban ghi DB vua ghi (xoa no di) — khi
+        // do file goc VAN CON NGUYEN vi tri cu (an toan hon nhieu so voi mat
+        // dau vet), va loi duoc nem tiep de nguoi goi biet thao tac that bai.
         record.Status = QuarantineStatus.Quarantined;
         _store.Add(record);
+        try
+        {
+            MoveIntoQuarantine(originalPath, quarantineId);
+        }
+        catch (Exception ex)
+        {
+            _store.Delete(quarantineId);
+            _logger.LogError(ex,
+                "Loi di chuyen file vao quarantine, da rollback ban ghi DB (file goc van con nguyen): {Path}",
+                originalPath);
+            throw;
+        }
         _audit.Log("quarantine", $"Da cach ly file: {originalPath} (ly do: {detectionReason})",
             new { quarantineId, originalPath, sha256 });
         return record;
@@ -98,8 +120,24 @@ public sealed class QuarantineManager
         var record = _store.Get(quarantineId);
         if (record is null || record.Status != QuarantineStatus.PendingManualConfirmation) return false;
 
-        MoveIntoQuarantine(record.OriginalPath, quarantineId);
+        // Cung nguyen tac chong mo côi ban ghi nhu QuarantineFile o tren: cap
+        // nhat trang thai DB TRUOC, di chuyen file SAU; that bai thi rollback
+        // trang thai ve PendingManualConfirmation (file he thong goc chua
+        // bao gio bi dong den trong nhanh nay, van an toan de giu nguyen
+        // trang thai cho xac nhan lai).
         _store.UpdateStatus(quarantineId, QuarantineStatus.Quarantined);
+        try
+        {
+            MoveIntoQuarantine(record.OriginalPath, quarantineId);
+        }
+        catch (Exception ex)
+        {
+            _store.UpdateStatus(quarantineId, QuarantineStatus.PendingManualConfirmation);
+            _logger.LogError(ex,
+                "Loi di chuyen file he thong vao quarantine, da rollback trang thai ve PendingManualConfirmation: {Path}",
+                record.OriginalPath);
+            throw;
+        }
         _audit.Log("quarantine", $"Nguoi dung xac nhan quarantine thu cong file he thong: {record.OriginalPath}",
             new { quarantineId });
         return true;
@@ -117,6 +155,23 @@ public sealed class QuarantineManager
         if (!File.Exists(quarantinedPath))
         {
             _logger.LogError("Khong tim thay file quarantine {Id} tren dia", quarantineId);
+            return false;
+        }
+
+        // [SUA LOI TRUNG BINH] TRUOC DAY File.WriteAllBytes ghi de thang len
+        // record.OriginalPath ma khong kiem tra file co ton tai san hay
+        // khong — neu nguoi dung (hoac chuong trinh khac) da tao lai mot
+        // file MOI cung ten tai vi tri do sau khi quarantine (truong hop
+        // hoan toan hop ly: file bi xoa/di chuyen roi nguoi dung luu file
+        // khac vao dung cho trong), Restore() se AM THAM XOA MAT noi dung
+        // file moi do ma khong canh bao gi — mat du lieu nguoi dung. Sua:
+        // that bai an toan (khong ghi de, tra ve false + log ro rang) neu
+        // vi tri goc DA CO file khac, thay vi ghi de trong im lang.
+        if (File.Exists(record.OriginalPath))
+        {
+            _logger.LogError(
+                "Khong the khoi phuc {Id}: vi tri goc {Path} da co mot file khac (co the da duoc tao lai sau khi quarantine) — tu choi ghi de de tranh mat du lieu",
+                quarantineId, record.OriginalPath);
             return false;
         }
 

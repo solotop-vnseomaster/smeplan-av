@@ -217,6 +217,24 @@ public sealed class UpdateClientService : BackgroundService
             return false;
         }
 
+        // [SUA LOI NGHIEM TRONG] TRUOC DAY neu File.Move thanh cong nhung
+        // LoadSignatureDb() SAU DO that bai (file moi build OK nhung vi ly
+        // do nao đo — dia hong, file bi khoa tuc thoi... — khong nap duoc
+        // vao engine), ham chi log loi roi return false, BO MAC engine o
+        // trang thai KHONG CO g_sig_db nao ca (UnmapSignatureDb da giai
+        // phong view CU tu truoc do). Vi CheckAndApplyAsync() KHONG goi
+        // SaveCurrentVersion khi applied=false, client van nghi minh o
+        // phien ban CU va se chi thu lai o CHU KY SAU (mac dinh 2 GIO) — tuc
+        // la dich vu chay KHONG CO CSDL signature nao (moi hash-scan deu bo
+        // qua) trong toan bo khoang thoi gian do, khong phai "vai mili giay"
+        // nhu ghi chu ben duoi mo ta cho truong hop binh thuong. Sua: sao
+        // luu CSDL CU truoc khi swap, va neu nap CSDL MOI that bai thi thu
+        // KHOI PHUC LAI CSDL CU tu ban sao luu do (van tra ve false — phien
+        // ban CHUA duoc ap dung thanh cong, se thu lai o lan check tiep
+        // theo — nhung engine co CSDL de dung ngay, khong bi "trang" keo dai).
+        var backupDb = tempDb + ".bak";
+        bool hadExistingDb = File.Exists(_signatureDbPath);
+
         // [SUA LOI NGHIEM TRONG] Truoc day goi File.Move roi Engine_Initialize
         // — nhung tai thoi diem File.Move chay, engine VAN CON giu mot VIEW
         // MEMORY-MAP dang hoat dong tren _signatureDbPath (tu lan Initialize
@@ -239,6 +257,14 @@ public sealed class UpdateClientService : BackgroundService
         _engine.UnmapSignatureDb();
         try
         {
+            if (hadExistingDb)
+            {
+                // Sao chep (khong phai move) CSDL CU sang ban sao luu tam —
+                // giu nguyen file goc tai _signatureDbPath cho toi khi
+                // File.Move ben duoi thay the no, de neu chinh buoc copy nay
+                // that bai thi chua co gi bi dong den.
+                File.Copy(_signatureDbPath, backupDb, overwrite: true);
+            }
             File.Move(tempDb, _signatureDbPath, overwrite: true);
         }
         catch (Exception ex)
@@ -247,15 +273,47 @@ public sealed class UpdateClientService : BackgroundService
             // Co gang nap lai CSDL CU (neu con) de khong bo lai dich vu o
             // trang thai hoan toan khong co CSDL nao.
             if (File.Exists(_signatureDbPath)) _engine.LoadSignatureDb(_signatureDbPath);
+            CleanupBackup(backupDb);
             return false;
         }
 
         bool loaded = _engine.LoadSignatureDb(_signatureDbPath);
         if (!loaded)
         {
-            _logger.LogError("Da doi ten CSDL moi nhung nap lai vao engine that bai: {Path}", _signatureDbPath);
+            _logger.LogError("Da doi ten CSDL moi nhung nap lai vao engine that bai: {Path} — thu khoi phuc CSDL CU tu ban sao luu de tranh dich vu chay khong co CSDL nao cho toi chu ky sau", _signatureDbPath);
+            if (hadExistingDb && File.Exists(backupDb))
+            {
+                try
+                {
+                    File.Copy(backupDb, _signatureDbPath, overwrite: true);
+                    if (_engine.LoadSignatureDb(_signatureDbPath))
+                    {
+                        _logger.LogWarning("Da khoi phuc va nap lai CSDL CU thanh cong sau khi CSDL moi loi — se thu ap dung lai o chu ky check tiep theo");
+                    }
+                    else
+                    {
+                        _logger.LogError("Khoi phuc CSDL CU tu ban sao luu cung khong nap lai duoc — dich vu tam thoi khong co CSDL signature nao");
+                    }
+                }
+                catch (Exception ex2)
+                {
+                    _logger.LogError(ex2, "Khong khoi phuc duoc CSDL CU tu ban sao luu sau khi CSDL moi nap loi");
+                }
+            }
         }
+        CleanupBackup(backupDb);
+        // Luu y: `loaded` phan anh ket qua nap CSDL MOI — neu that bai va da
+        // roll-back ve CSDL CU o tren, ham VAN tra ve false (phien ban moi
+        // CHUA duoc ap dung thanh cong nen KHONG duoc SaveCurrentVersion),
+        // nhung engine luc nay van co mot CSDL hop le de dung ngay thay vi
+        // trong rong toi chu ky sau.
         return loaded;
+    }
+
+    private void CleanupBackup(string backupDb)
+    {
+        try { if (File.Exists(backupDb)) File.Delete(backupDb); }
+        catch (Exception ex) { _logger.LogWarning(ex, "Khong xoa duoc file backup tam {Path}", backupDb); }
     }
 
     private int LoadCurrentVersion() => Antivirus.Service.Common.JsonVersionState.Load(_versionStatePath);

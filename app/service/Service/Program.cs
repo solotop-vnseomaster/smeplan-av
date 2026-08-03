@@ -34,8 +34,12 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 
 builder.Services.AddCors(options =>
 {
+    // [SUA LOI NHO] Truoc day con them "...5271" — Kestrel o tren CHI nghe
+    // dung MOT port (5270, xem ConfigureKestrel ngay ben tren), khong co
+    // listener nao tren 5271 ca. Entry thua nay khong mang lai loi ich
+    // chuc nang nao, chi la du thua/gay nham lan khi doc code.
     options.AddDefaultPolicy(policy => policy
-        .WithOrigins("http://127.0.0.1:5270", "http://localhost:5270", "http://127.0.0.1:5271", "http://localhost:5271")
+        .WithOrigins("http://127.0.0.1:5270", "http://localhost:5270")
         .AllowAnyHeader()
         .AllowAnyMethod());
 });
@@ -251,18 +255,37 @@ app.MapPost("/api/downloads/{id}/action", (DownloadsDecisionBroker broker, Quara
     var item = broker.Get(id);
     if (item is null) return Results.NotFound();
 
-    switch (req.Action.ToLowerInvariant())
+    // [SUA LOI TRUNG BINH] TRUOC DAY nhanh "delete" nuot MOI exception
+    // (try/catch rong) roi VAN goi broker.Remove(id) + tra ve 200 OK ben
+    // duoi — neu File.Delete that bai (file dang bi khoa, quyen khong du...)
+    // UI van duoc bao "thanh cong" trong khi file nghi ngo VAN CON tren dia
+    // va muc pending da bi xoa khoi danh sach (khong con co hoi thu lai qua
+    // UI). Nhanh "quarantine" thi khong bat loi gi ca — neu QuarantineFile
+    // nem exception, request se that bai voi 500 nhung KHONG co thong diep
+    // ro rang. Sua: bat loi rieng cho tung nhanh, tra ve loi (KHONG phai
+    // 200) va KHONG xoa muc pending khi that bai — nguoi dung con co the
+    // thu lai thay vi mat dau vet vinh vien.
+    try
     {
-        case "delete":
-            try { File.Delete(item.FilePath); } catch { }
-            break;
-        case "quarantine":
-            qm.QuarantineFile(item.FilePath, item.Sha256Hex, item.Reason);
-            break;
-        case "ignore":
-            break;
-        default:
-            return Results.BadRequest(new { error = "action phai la delete|quarantine|ignore" });
+        switch (req.Action.ToLowerInvariant())
+        {
+            case "delete":
+                File.Delete(item.FilePath);
+                break;
+            case "quarantine":
+                qm.QuarantineFile(item.FilePath, item.Sha256Hex, item.Reason);
+                break;
+            case "ignore":
+                break;
+            default:
+                return Results.BadRequest(new { error = "action phai la delete|quarantine|ignore" });
+        }
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(
+            detail: $"Khong thuc hien duoc hanh dong '{req.Action}' tren file {item.FilePath}: {ex.Message}",
+            statusCode: StatusCodes.Status500InternalServerError);
     }
     broker.Remove(id);
     return Results.Ok();
@@ -280,6 +303,17 @@ app.MapGet("/api/scan/full/flagged", (FullScanService fs) => Results.Ok(fs.GetFl
 // --- Scan mot file thu cong (dung cho demo/manual test qua UI, vi du EICAR) ---
 app.MapPost("/api/scan/file", (ScanEngineService engineSvc, ArchiveScanner archiveScanner, ScanFileRequest req) =>
 {
+    // [SUA LOI NGHIEM TRONG] Xem PathUtil.IsLocalDrivePath — truoc day
+    // req.Path (nhan tho tu client) duoc dua thang vao File.Exists/ScanFile,
+    // cho phep mot duong dan UNC (\\host\share\...) buoc tien trinh service
+    // (chay quyen SYSTEM) tu ket noi/xac thuc SMB toi may chu do attacker
+    // chi dinh (forced authentication / NTLM relay), du file "khong ton
+    // tai". Tu choi truoc bat ky duong dan nao khong phai duong dan cuc bo
+    // hop le tren o dia, TRUOC KHI cham vao he thong file.
+    if (!Antivirus.Service.Common.PathUtil.IsLocalDrivePath(req.Path))
+    {
+        return Results.BadRequest(new { error = "Chi chap nhan duong dan cuc bo tren o dia (khong ho tro UNC/duong dan mang)" });
+    }
     if (!File.Exists(req.Path)) return Results.NotFound(new { error = "File khong ton tai" });
     var result = ArchiveScanner.IsZipArchive(req.Path) ? archiveScanner.ScanZip(req.Path) : engineSvc.ScanFile(req.Path);
     return Results.Ok(result);
