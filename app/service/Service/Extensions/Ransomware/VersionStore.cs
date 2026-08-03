@@ -59,6 +59,25 @@ public sealed class VersionStore
 
     public void SnapshotFile(string originalPath, int triggeredByPid)
     {
+        using var conn = Open();
+        SnapshotFile(conn, originalPath, triggeredByPid);
+    }
+
+    // [SUA LOI NGHIEM TRONG] Ban truoc day SnapshotFile tu mo MOT ket noi
+    // SQLite roi PruneOldVersions ben trong lai tu mo THEM mot ket noi rieng
+    // — moi lan snapshot mot file la 2 lan mo/dong ket noi. Tro nen dac
+    // biet nghiem trong khi bi goi trong vong lap qua hang tram file (xem
+    // RansomwareGuardService.BaselineSnapshotExistingFiles va
+    // EvaluateWindow): dung luc can nhanh nhat (quet baseline luc khoi
+    // dong, hoac rollback khi ransomware dang hoat dong that su) lai la
+    // luc cham nhat vi overhead mo ket noi SQLite nhan doi tren tung file.
+    // Sua: tach phan than logic sang overload nhan SqliteConnection co san,
+    // dung CHUNG mot ket noi cho ca insert va prune; API cong khai
+    // SnapshotFile(string,int) van mo dung 1 ket noi cho ca hai buoc thay
+    // vi 2. RansomwareGuardService dung OpenBatch() ben duoi de dung CHUNG
+    // mot ket noi xuyen suot ca mot vong lap nhieu file.
+    private void SnapshotFile(SqliteConnection conn, string originalPath, int triggeredByPid)
+    {
         if (!File.Exists(originalPath)) return;
 
         var storedName = Guid.NewGuid().ToString("N");
@@ -74,7 +93,6 @@ public sealed class VersionStore
 
         var size = new FileInfo(storedPath).Length;
 
-        using var conn = Open();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             INSERT INTO version_store (original_path, version_timestamp, stored_path, triggered_by_pid, file_size)
@@ -87,12 +105,11 @@ public sealed class VersionStore
         cmd.Parameters.AddWithValue("$size", size);
         cmd.ExecuteNonQuery();
 
-        PruneOldVersions(originalPath);
+        PruneOldVersions(conn, originalPath);
     }
 
-    private void PruneOldVersions(string originalPath)
+    private void PruneOldVersions(SqliteConnection conn, string originalPath)
     {
-        using var conn = Open();
         using var selectCmd = conn.CreateCommand();
         selectCmd.CommandText = "SELECT id, stored_path FROM version_store WHERE original_path = $path ORDER BY version_timestamp DESC";
         selectCmd.Parameters.AddWithValue("$path", originalPath);
@@ -124,6 +141,11 @@ public sealed class VersionStore
     public VersionStoreRecord? GetLatestVersion(string originalPath)
     {
         using var conn = Open();
+        return GetLatestVersion(conn, originalPath);
+    }
+
+    private VersionStoreRecord? GetLatestVersion(SqliteConnection conn, string originalPath)
+    {
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT * FROM version_store WHERE original_path = $path ORDER BY version_timestamp DESC LIMIT 1";
         cmd.Parameters.AddWithValue("$path", originalPath);
@@ -138,7 +160,13 @@ public sealed class VersionStore
     // (han che da ghi trong features.md).
     public bool RestoreLatestVersion(string originalPath)
     {
-        var latest = GetLatestVersion(originalPath);
+        using var conn = Open();
+        return RestoreLatestVersion(conn, originalPath);
+    }
+
+    private bool RestoreLatestVersion(SqliteConnection conn, string originalPath)
+    {
+        var latest = GetLatestVersion(conn, originalPath);
         if (latest is null || !File.Exists(latest.StoredPath)) return false;
 
         try
@@ -150,6 +178,34 @@ public sealed class VersionStore
         {
             return false;
         }
+    }
+
+    // [SUA LOI NGHIEM TRONG] GetLatestVersion/SnapshotFile/RestoreLatestVersion
+    // moi ham deu tu mo VA dong MOT ket noi SQLite rieng — goi lien tiep
+    // hang tram lan trong mot vong lap (baseline scan luc khoi dong,
+    // rollback khi ransomware dang ma hoa that su) nghia la hang tram lan
+    // mo/dong ket noi dung luc can toc do nhat. OpenBatch tra ve mot handle
+    // dung CHUNG mot ket noi cho toan bo vong lap goi no — RansomwareGuardService
+    // dung handle nay thay vi goi truc tiep len VersionStore trong cac vong
+    // lap cua BaselineSnapshotExistingFiles va EvaluateWindow.
+    public VersionStoreBatch OpenBatch() => new(this, Open());
+
+    public sealed class VersionStoreBatch : IDisposable
+    {
+        private readonly VersionStore _store;
+        private readonly SqliteConnection _conn;
+
+        internal VersionStoreBatch(VersionStore store, SqliteConnection conn)
+        {
+            _store = store;
+            _conn = conn;
+        }
+
+        public VersionStoreRecord? GetLatestVersion(string originalPath) => _store.GetLatestVersion(_conn, originalPath);
+        public void SnapshotFile(string originalPath, int triggeredByPid) => _store.SnapshotFile(_conn, originalPath, triggeredByPid);
+        public bool RestoreLatestVersion(string originalPath) => _store.RestoreLatestVersion(_conn, originalPath);
+
+        public void Dispose() => _conn.Dispose();
     }
 
     public List<VersionStoreRecord> ListAllTrackedPaths()
