@@ -31,6 +31,27 @@ public static class AuthenticodeVerifier
         "Microsoft Windows Publisher",
     };
 
+    // [SUA LOI NGHIEM TRONG] WinVerifyTrust voi WTD_REVOKE_WHOLECHAIN goi
+    // CRL/OCSP QUA MANG ben trong P/Invoke dong bo, KHONG co timeout rieng
+    // — goi tren MOI tien trinh moi khoi chay (ProcessTrustEngine goi qua
+    // DriverSimulatorService). Neu mang cham/proxy chan (pho bien o may
+    // doanh nghiep), moi lan mo app co the treo vai giay toi hang chuc
+    // giay, lap lai lien tuc. Sua: bao mot deadline cung quanh cuoc goi
+    // dong bo (chay tren threadpool thread rieng) — qua deadline thi coi
+    // nhu KHONG xac thuc duoc chain (an toan hon: rot xuong kiem tra rule
+    // theo hash/publisher hoac hoi nguoi dung, KHONG allow mu) thay vi treo
+    // vo thoi han luong xu ly process-creation.
+    public static async Task<AuthenticodeResult> VerifyAsync(string filePath, TimeSpan timeout, CancellationToken ct)
+    {
+        var verifyTask = Task.Run(() => Verify(filePath), ct);
+        var winner = await Task.WhenAny(verifyTask, Task.Delay(timeout, ct));
+        if (winner == verifyTask)
+        {
+            return await verifyTask;
+        }
+        return new AuthenticodeResult(false, null, null);
+    }
+
     public static AuthenticodeResult Verify(string filePath)
     {
         bool chainValid = CallWinVerifyTrust(filePath);

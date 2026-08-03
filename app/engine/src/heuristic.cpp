@@ -124,8 +124,16 @@ void HeuristicEngine::AnalyzePe(const uint8_t* data, size_t length, HeuristicRes
                     for (; reinterpret_cast<const uint8_t*>(thunk + 1) <= data + length && thunk->u1.AddressOfData != 0; thunk++) {
                         if (thunk->u1.Ordinal & IMAGE_ORDINAL_FLAG64) continue;
                         DWORD name_offset = RvaToOffset(static_cast<DWORD>(thunk->u1.AddressOfData), sections, section_count);
-                        if (name_offset == 0 || name_offset + 2 >= length) continue;
-                        const char* fn_name = reinterpret_cast<const char*>(data + name_offset + 2);
+                        // [SUA LOI NGHIEM TRONG] "name_offset + 2" o day PHAI
+                        // tinh trong mien size_t (64-bit): neu tinh trong mien
+                        // DWORD (32-bit) nhu truoc day, gia tri co the "wrap"
+                        // ve mot so nho va vuot qua check ">= length", nhung
+                        // phep tinh con tro thuc te "data + name_offset + 2"
+                        // ben duoi lai la 64-bit (KHONG wrap) — dan toi doc
+                        // lech ~4GB tren du lieu PE crafted du y do xau.
+                        size_t name_offset_sz = static_cast<size_t>(name_offset);
+                        if (name_offset == 0 || name_offset_sz + 2 >= length) continue;
+                        const char* fn_name = reinterpret_cast<const char*>(data + name_offset_sz + 2);
                         for (auto* api : kHighRiskApis) if (strncmp(fn_name, api, 64) == 0) high_risk_hits++;
                         for (auto* api : kModerateRiskApis) if (strncmp(fn_name, api, 64) == 0) moderate_risk_hits++;
                     }
@@ -134,8 +142,12 @@ void HeuristicEngine::AnalyzePe(const uint8_t* data, size_t length, HeuristicRes
                     for (; reinterpret_cast<const uint8_t*>(thunk + 1) <= data + length && thunk->u1.AddressOfData != 0; thunk++) {
                         if (thunk->u1.Ordinal & IMAGE_ORDINAL_FLAG32) continue;
                         DWORD name_offset = RvaToOffset(thunk->u1.AddressOfData, sections, section_count);
-                        if (name_offset == 0 || name_offset + 2 >= length) continue;
-                        const char* fn_name = reinterpret_cast<const char*>(data + name_offset + 2);
+                        // Xem ghi chu o nhanh PE32+ ben tren: check phai tinh
+                        // trong mien size_t de khong bi wrap 32-bit lech voi
+                        // phep tinh con tro thuc te.
+                        size_t name_offset_sz = static_cast<size_t>(name_offset);
+                        if (name_offset == 0 || name_offset_sz + 2 >= length) continue;
+                        const char* fn_name = reinterpret_cast<const char*>(data + name_offset_sz + 2);
                         for (auto* api : kHighRiskApis) if (strncmp(fn_name, api, 64) == 0) high_risk_hits++;
                         for (auto* api : kModerateRiskApis) if (strncmp(fn_name, api, 64) == 0) moderate_risk_hits++;
                     }

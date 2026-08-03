@@ -355,7 +355,12 @@ SmePlanAvFwCacheLookup(
         PSMEPLANAV_FW_CACHE_ENTRY entry = &Context->Cache[i];
         if (!entry->InUse) continue;
         if (entry->RemotePort != RemotePort || entry->Protocol != Protocol) continue;
-        if (wcscmp(entry->ProcessPath, ProcessPath) != 0) continue;
+        // [SUA LOI NGHIEM TRONG] wcscmp phan biet hoa/thuong nhung duong
+        // dan file tren Windows la KHONG phan biet hoa/thuong — mot app bi
+        // Block van PERMIT duoc (fail-open mac dinh khi cache-miss) chi
+        // bang cach doi hoa/thuong trong path khi chay lai. Dung _wcsicmp
+        // (nhu minifilter.c da lam dung o noi khac trong cung repo).
+        if (_wcsicmp(entry->ProcessPath, ProcessPath) != 0) continue;
         *Action = entry->Action;
         found = TRUE;
         break;
@@ -378,7 +383,7 @@ SmePlanAvFwCacheUpsert(
     for (i = 0; i < SMEPLANAV_FW_CACHE_CAPACITY; i++) {
         PSMEPLANAV_FW_CACHE_ENTRY entry = &Context->Cache[i];
         if (entry->InUse && entry->RemotePort == RemotePort && entry->Protocol == Protocol &&
-            wcscmp(entry->ProcessPath, ProcessPath) == 0) {
+            _wcsicmp(entry->ProcessPath, ProcessPath) == 0) {
             entry->Action = Action;
             KeReleaseSpinLock(&Context->CacheLock, oldIrql);
             return;

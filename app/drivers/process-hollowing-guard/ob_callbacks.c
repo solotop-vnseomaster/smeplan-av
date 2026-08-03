@@ -46,9 +46,23 @@ DriverEntry(
     KeInitializeSpinLock(&gObContext.PendingNotifyLock);
     InitializeListHead(&gObContext.PendingNotifyIrps);
 
+    // [SUA LOI NGHIEM TRONG] TRUOC DAY dung IoCreateDevice thuong, KHONG gan
+    // security descriptor nao ca — mac dinh Windows ap DACL rong (cho phep
+    // MOI tien trinh local, ke ca khong dac quyen, mo handle toi
+    // \Device\SmePlanAvObGuard). Vi IOCTL_SMEPLANAV_OB_PUSH_WHITELIST cho
+    // phep tu whitelist BAT KY PID nao khoi kiem tra cua driver nay, mot
+    // tien trinh khong dac quyen (vi du chinh malware dang thuc hien
+    // process hollowing) co the tu goi IOCTL nay de vo hieu hoa toan bo
+    // driver truoc khi hanh dong. Sua giong het cach wfp_callout.c da lam:
+    // IoCreateDeviceSecure + SDDL chi cho SYSTEM (SY) va Administrators (BA).
     RtlInitUnicodeString(&deviceName, L"\\Device\\SmePlanAvObGuard");
-    status = IoCreateDevice(
-        DriverObject, 0, &deviceName, FILE_DEVICE_UNKNOWN, 0, FALSE, &gObContext.DeviceObject);
+    {
+        UNICODE_STRING sddl;
+        RtlInitUnicodeString(&sddl, L"D:P(A;;GA;;;SY)(A;;GA;;;BA)");
+        status = IoCreateDeviceSecure(
+            DriverObject, 0, &deviceName, FILE_DEVICE_UNKNOWN, 0, FALSE,
+            &sddl, NULL, &gObContext.DeviceObject);
+    }
     if (!NT_SUCCESS(status)) {
         return status;
     }

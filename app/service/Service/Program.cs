@@ -92,7 +92,8 @@ builder.Services.AddSingleton(new Antivirus.Service.Extensions.Network.KnownNetw
 builder.Services.AddSingleton<Antivirus.Service.Extensions.Network.HomeNetworkMonitorService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<Antivirus.Service.Extensions.Network.HomeNetworkMonitorService>());
 
-builder.Services.AddSingleton(CompanyCertificateProvider.GetOrCreate());
+builder.Services.AddSingleton(
+    CompanyCertificateProvider.GetOrCreateForEnvironment(builder.Environment, builder.Configuration));
 builder.Services.AddSingleton<IUpdatePackageSource>(_ =>
     new LocalFolderUpdatePackageSource(Path.Combine(DataPaths.RootDir, "update-drop")));
 builder.Services.AddSingleton<UpdateClientService>(sp => new UpdateClientService(

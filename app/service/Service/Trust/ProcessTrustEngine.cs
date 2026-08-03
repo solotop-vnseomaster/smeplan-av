@@ -52,7 +52,11 @@ public sealed class ProcessTrustEngine
         }
 
         var sha256 = ComputeSha256(processPath);
-        var authenticode = AuthenticodeVerifier.Verify(processPath);
+        // Xem ghi chu tai AuthenticodeVerifier.VerifyAsync: bao deadline
+        // cung quanh WinVerifyTrust (revocation check qua mang khong
+        // timeout) de mot process moi khoi chay khong bi treo vo thoi han
+        // khi mang cham/proxy chan.
+        var authenticode = await AuthenticodeVerifier.VerifyAsync(processPath, TimeSpan.FromSeconds(5), ct);
         bool isMicrosoftPublisher = AuthenticodeVerifier.IsMicrosoftPublisher(authenticode.PublisherName);
         bool inTrustedDirectory = TrustedDirectories.Where(d => !string.IsNullOrEmpty(d))
             .Any(d => Antivirus.Service.Common.PathUtil.IsPathUnderDirectory(processPath, d));

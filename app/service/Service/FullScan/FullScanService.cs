@@ -166,7 +166,24 @@ public sealed class FullScanService
                 : EnumerateViaDirectoryWalk(volumeRoot);
 
             string? resumeAfter = LoadResumeState(volumeRoot);
-            bool skipUntilResume = resumeAfter is not null;
+            // [SUA LOI NGHIEM TRONG] TRUOC DAY skipUntilResume duoc bat chi
+            // dua tren viec CO luu resumeAfter hay khong, khong kiem tra file
+            // do co con ton tai hay khong. Neu file moc nay da bi xoa/di
+            // chuyen giua 2 lan quet, no se KHONG BAO GIO xuat hien trong lan
+            // enumerate moi -> skipUntilResume khong bao gio ve false -> toan
+            // bo vong lap duoi day "continue" mai, KHONG file nao duoc quet,
+            // nhung Status van duoc bao Completed o cuoi ham — danh lua nguoi
+            // dung tuong may da duoc bao ve day du. Sua: chi bat skip khi moc
+            // resumeAfter CON THUC SU TON TAI tren dia; neu khong, coi nhu
+            // khong co moc resume hop le va quet lai TOAN BO volume ngay tu
+            // dau (an toan hon la bo sot file, ke ca file doc hai).
+            bool skipUntilResume = resumeAfter is not null && File.Exists(resumeAfter);
+            if (resumeAfter is not null && !skipUntilResume)
+            {
+                _logger.LogWarning(
+                    "Moc resume da luu ({ResumeAfter}) khong con ton tai tren dia - bo qua moc nay, quet lai toan bo volume {Volume}",
+                    resumeAfter, volumeRoot);
+            }
 
             // [UX FIX] Ghi ro trong audit khi day la mot lan TIEP TUC tu
             // trang thai da luu (khong phai quet moi tu dau) — truoc day
