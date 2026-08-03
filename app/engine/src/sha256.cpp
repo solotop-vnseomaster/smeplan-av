@@ -125,8 +125,16 @@ bool Sha256::FileSha256(const wchar_t* path, uint8_t out_digest[32]) {
     while ((ok = ReadFile(h, buf, sizeof(buf), &read, nullptr)) && read > 0) {
         hasher.Update(buf, read);
     }
+    // [SUA LOI NGHIEM TRONG] Phai luu ma loi cua ReadFile TRUOC khi goi
+    // CloseHandle: CloseHandle KHONG dam bao giu nguyen GetLastError() khi
+    // no tu than thanh cong, nen doc GetLastError() SAU CloseHandle (nhu
+    // code cu) co the tra ve mot ma loi khong lien quan. Caller (pipeline.cpp,
+    // nhanh Engine_ScanFile cho file >64MB) dua vao GetLastError() ngay sau
+    // khi ham nay tra false de phan loai loi hien thi cho nguoi dung qua
+    // CopyClassifiedIoError - can gia tri dung.
+    DWORD read_err = ok ? 0 : GetLastError();
     CloseHandle(h);
-    if (!ok) return false;
+    if (!ok) { SetLastError(read_err); return false; }
     hasher.Final(out_digest);
     return true;
 }

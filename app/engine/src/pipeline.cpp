@@ -318,18 +318,59 @@ SCANENGINE_API int Engine_ScanFile(const wchar_t* file_path, ScanResult* out_res
         // File lon hon gioi han doc trong bo nho: hash toan bo file bang
         // duong streaming rieng de dam bao ket qua hash dung, van chay
         // YARA/heuristic tren phan dau da doc.
+        //
+        // [SUA LOI NGHIEM TRONG] Hai loi lien quan o day:
+        // (1) Truoc day, neu Sha256::FileSha256() THAT BAI (loi doc file
+        // giua chung - hong dia, mat quyen, file bi khoa sau khi da mo...),
+        // code roi tuot xuong RunPipeline(buffer,...) ben duoi va COI NHU
+        // quet thanh cong: sha256_hex tra ve la hash cua CHI phan dau file
+        // (buffer, do RunPipeline tu tinh hash tren du lieu duoc truyen vao)
+        // chu KHONG PHAI hash that cua toan bo file, va khong co canh bao
+        // loi nao duoc tra ve cho caller. Sua: neu FileSha256 that bai, tra
+        // ve ScanError ro rang (giong het pattern loi I/O khac trong ham
+        // nay), KHONG duoc coi day la mot lan quet hop le voi hash sai.
+        // (2) Thu tu goi cu la RunPipeline() TRUOC (tu quyet dinh verdict,
+        // co the ket luan Malicious/HashSignature ngay tu buoc 1 ben trong
+        // no dua tren hash cua BUFFER cat bot) roi moi tra CSDL bang hash
+        // THAT cua toan bo file va ghi de sha256_hex SAU - neu tra cuu bang
+        // hash that KHONG khop, verdict cu (da dua tren hash buffer) van
+        // duoc giu nguyen trong khi sha256_hex hien thi lai la hash that,
+        // khien nguoi/dich vu doc log khong the doi chieu duoc tai sao co
+        // ket luan do tu chinh hash duoc hien thi. Sua: tra CSDL bang hash
+        // THAT truoc (dung y het nhu nhanh file nho: khop la ket luan ngay,
+        // khong chay YARA/heuristic), chi khi KHONG khop moi chay
+        // RunPipeline tren buffer cat bot, va luon ghi lai hash THAT vao
+        // sha256_hex sau cung de gia tri tra ve khong bao gio phu thuoc thu
+        // tu goi ngam ben trong.
         uint8_t digest[32];
-        if (Sha256::FileSha256(file_path, digest)) {
-            RunPipeline(buffer.data(), buffer.size(), file_path, out_result);
-            std::string hex = Sha256::ToHex(digest);
-            strncpy_s(out_result->sha256_hex, sizeof(out_result->sha256_hex), hex.c_str(), _TRUNCATE);
-            // Tra lai CSDL bang hash TOAN BO file (khac hash cua buffer da
-            // cat bot ma RunPipeline vua dung o tren) — dung chung ham voi
-            // buoc 1 cua RunPipeline (xem TryApplyHashSignatureMatch).
-            TryApplyHashSignatureMatch(digest, out_result,
-                "Khop CSDL signature (hash SHA-256 tinh tren toan bo file)");
+        if (!Sha256::FileSha256(file_path, digest)) {
+            DWORD err = GetLastError();
+            out_result->verdict = ScanVerdict_ScanError;
+            out_result->stage = DetectionStage_IoError;
+            SetLastError(err);
+            CopyClassifiedIoError(out_result, "loi tinh hash SHA-256 tren toan bo file lon - KHONG duoc coi la da quet xong");
             return 0;
         }
+
+        std::string hex = Sha256::ToHex(digest);
+        strncpy_s(out_result->sha256_hex, sizeof(out_result->sha256_hex), hex.c_str(), _TRUNCATE);
+
+        // Tra CSDL bang hash TOAN BO file THAT (khac hash cua buffer cat bot)
+        // TRUOC KHI chay YARA/heuristic — dung chung ham voi buoc 1 cua
+        // RunPipeline (xem TryApplyHashSignatureMatch). Khop la ket luan
+        // ngay, giong het hanh vi nhanh file nho.
+        if (TryApplyHashSignatureMatch(digest, out_result,
+                "Khop CSDL signature (hash SHA-256 tinh tren toan bo file)")) {
+            return 0;
+        }
+
+        RunPipeline(buffer.data(), buffer.size(), file_path, out_result);
+        // RunPipeline vua ghi de sha256_hex bang hash cua BUFFER cat bot
+        // (chi phan dau file, do gioi han doc kMaxInMemory) — ghi lai hash
+        // THAT cua toan bo file da tinh o tren de gia tri tra ve luon dung
+        // voi noi dung THAT cua file, bat ke RunPipeline lam gi ben trong.
+        strncpy_s(out_result->sha256_hex, sizeof(out_result->sha256_hex), hex.c_str(), _TRUNCATE);
+        return 0;
     }
 
     RunPipeline(buffer.data(), buffer.size(), file_path, out_result);
