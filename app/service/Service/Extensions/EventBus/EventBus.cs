@@ -12,9 +12,34 @@ public sealed class CorrelationEvent
 {
     public required string EntityKey { get; init; } // hash file, hoac "pid:createTimeTicks" cho tien trinh
     public required string SourceEngine { get; init; } // "scan" | "firewall" | "ransomware" | "sandbox" | "phishing" | "usb" | ...
-    public int Severity { get; init; } // 0-100
+
+    // 0-100, cang cao cang nghiem trong. KHONG co validation ep buoc thang
+    // do nay (moi module tu quyet gia tri, xem SeverityBand ben duoi cho
+    // quy uoc THAM KHAO) — day la van de kien truc lon hon mot fix nho o
+    // day co the giai quyet (can su dong thuan giua tat ca module publish
+    // vao EventBus), nen KHONG doi lai gia tri hien co cua bat ky module
+    // nao (Usb, Webcam, Network, Firewall/ConnectionMonitor, Ransomware,
+    // FullScan...) trong lan sua nay de tranh thay doi hanh vi xep hang/
+    // canh bao tren UI ngoai du kien.
+    public int Severity { get; init; }
     public required string Summary { get; init; }
     public long TimestampUnixMs { get; init; }
+}
+
+// Quy uoc THAM KHAO cho CorrelationEvent.Severity — khong duoc code nao
+// ep buoc, chi giup module MOI chon gia tri nhat quan voi cac module da
+// co thay vi tu nghi ra mot con so tuy y. Doi chieu voi gia tri THUC TE
+// dang dung tai thoi diem viet ghi chu nay: Usb (5/30/60), Webcam (5/50),
+// Network/HomeNetworkMonitor (15/20), Firewall/ConnectionMonitor (40/55),
+// Ransomware (25/55/95), FullScan (30) — nhin chung khop voi 4 muc duoi
+// day, tuy khong tuyet doi nhat quan giua cac module (vi du Ransomware
+// dung 25 cho "Medium" trong khi Network dung 15-20 cho cung y nghia).
+public static class SeverityBand
+{
+    public const int Low = 0;        // theo doi nen, chua dang canh bao nguoi dung
+    public const int Medium = 25;    // dang ngo, co the can chu y
+    public const int High = 50;      // kha nghi ro, nen canh bao ro rang
+    public const int Critical = 75;  // xac nhan hoac gan chac chan doc hai
 }
 
 public sealed class EntityState
