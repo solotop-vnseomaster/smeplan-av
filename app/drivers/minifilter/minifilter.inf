@@ -36,7 +36,20 @@ Description      = %ServiceDescription%
 ServiceBinary    = %12%\%DriverName%.sys
 Dependencies     = "FltMgr"
 ServiceType      = 2          ; SERVICE_FILE_SYSTEM_DRIVER
-StartType        = 0          ; SERVICE_BOOT_START — chay som tu boot
+; [SUA LOI NGHIEM TRONG — HONG MAY] TRUOC DAY la 0 (SERVICE_BOOT_START).
+; BOOT_START chi an toan khi da co MOT client user-mode ket noi duoc cong
+; giao tiep cua driver o giai doan rat som. Hien tai KHONG co client nao ton
+; tai: grep FilterConnectCommunicationPort/FilterGetMessage/FilterReplyMessage
+; trong toan bo service/, ui/, browser-extension/ cho ra 0 ket qua.
+; Nap driver nay o trang thai BOOT_START khi chua co client la mot qua bom
+; hen gio (xem ghi chu day du tai SmePlanAvMfPreCreateCallback trong
+; minifilter.c). Da them bypass cho STATUS_PORT_DISCONNECTED o ca hai callback
+; nen truong hop xau nhat khong con lam may khong boot duoc, nhung BOOT_START
+; van khong dung cho toi khi nua user-mode ton tai va duoc kiem thu.
+; Doi ve 3 (SERVICE_DEMAND_START): driver chi nap khi duoc yeu cau ro rang,
+; sau khi service da san sang. Doi lai 0 khi da co client user-mode va da
+; kiem thu boot tren may ao.
+StartType        = 3          ; SERVICE_DEMAND_START — xem ghi chu tren
 ErrorControl     = 1          ; SERVICE_ERROR_NORMAL
 LoadOrderGroup   = "FSFilter Anti-Virus"
 AddReg           = MiniFilter.AddRegistry

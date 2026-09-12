@@ -59,6 +59,30 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
 
       if (!response) return;
 
+      // [SUA LOI CAO — GUARD DUNG, TRUOC DAY AP THIEU DUONG] Native host
+      // (native-host/Program.cs) da can than dung cho: no CHI ghi vao
+      // DomainCache trong nhanh THANH CONG, con hai nhanh loi
+      // ("service_unreachable" va "native_host_exception") tra ve
+      // { malicious: false, error: ... } ma KHONG cache.
+      // Nhung o day thi khong: `response.malicious` la false trong ca hai
+      // nhanh loi do, nen luong roi thang xuong else va goi markDomainClean
+      // — ghi nho domain la SACH trong 5 phut chi vi service khong tra loi
+      // duoc. Trong 5 phut do, extension khong hoi lai lan nao nua, ke ca
+      // khi service da hoat dong tro lai. Mot loi tam thoi bi bien thanh
+      // mot ket luan "an toan" co thoi han.
+      // "Fail open" (khong chan khi khong co ket luan) van giu nguyen — chi
+      // la KHONG duoc GHI NHO cai khong-co-ket-luan do nhu mot ket luan.
+      if (response.error) {
+        console.warn(
+          "SMEPlan AV: khong co ket luan cho",
+          url.hostname,
+          "-",
+          response.error,
+          "- khong chan, va KHONG cache la sach"
+        );
+        return;
+      }
+
       if (response.malicious) {
         const warningUrl = chrome.runtime.getURL(
           `warning.html?blocked=${encodeURIComponent(details.url)}&reason=${encodeURIComponent(response.matchedOn || "")}`

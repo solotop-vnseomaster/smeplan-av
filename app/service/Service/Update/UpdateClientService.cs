@@ -20,7 +20,17 @@ public sealed class UpdateClientService : BackgroundService
     private readonly ScanEngineService _engine;
     private readonly AuditLogger _audit;
     private readonly ILogger<UpdateClientService> _logger;
-    private readonly X509Certificate2 _trustedCert;
+    // [SUA LOI CHAN PHAT HANH — A3] Cert co the VANG MAT: tren may san
+    // xuat, neu operator chua cau hinh UpdateSigning:CertPath thi service
+    // van phai khoi dong va bao ve may (quet, real-time, quarantine), CHI
+    // rieng kenh cap nhat bi tat. Truoc day Program.cs lay cert bang mot
+    // loi goi lượng gia tuc thi ngay tai dong dang ky DI, nen thieu cau
+    // hinh = nem InvalidOperationException = service KHONG BAO GIO khoi
+    // dong duoc tren bat ky may nao cai bang MSI. Mot AV khong chay con te
+    // hon mot AV khong tu cap nhat.
+    // null = KHONG co neo tin cay => moi goi cap nhat deu bi tu choi
+    // (fail-closed, xem TryVerifyPackage).
+    private readonly X509Certificate2? _trustedCert;
     private readonly TimeSpan _interval;
 
     private readonly string _versionStatePath;
@@ -30,13 +40,33 @@ public sealed class UpdateClientService : BackgroundService
 
     public UpdateStatus Status { get; } = new();
 
+    // Phoi ra ngoai de /api/status hien duoc trang thai suy giam thay vi
+    // im lang bo qua moi goi cap nhat.
+    public bool SigningTrustConfigured => _trustedCert is not null;
+
+    // Chi cho phep MOT luot check/apply chay tai mot thoi diem — xem ghi chu
+    // trong CheckAndApplyAsync.
+    private readonly SemaphoreSlim _updateGate = new(1, 1);
+
+    // Cua DUY NHAT di toi UpdatePackageVerifier trong class nay — de khong
+    // co duong nao xac thuc goi ma bo qua kiem tra "co neo tin cay khong".
+    private bool TryVerifyPackage(byte[] signedPackage, out byte[] payload)
+    {
+        if (_trustedCert is null)
+        {
+            payload = Array.Empty<byte>();
+            return false;
+        }
+        return UpdatePackageVerifier.TryVerifyAndExtract(signedPackage, _trustedCert, out payload);
+    }
+
     // Cac tham so path la optional, mac dinh dung DataPaths (san xuat that);
     // kiem thu co the truyen path rieng de co lap voi ProgramData that.
     // scanCache la optional (null trong test) — khi co, moi lan ap dung
     // CSDL moi thanh cong se xoa toan bo cache full scan (xem
     // ScanCacheStore.cs muc "DIEM AN TOAN BAT BUOC").
     public UpdateClientService(IUpdatePackageSource source, ScanEngineService engine, AuditLogger audit,
-        ILogger<UpdateClientService> logger, X509Certificate2 trustedCert, TimeSpan? interval = null,
+        ILogger<UpdateClientService> logger, X509Certificate2? trustedCert, TimeSpan? interval = null,
         string? versionStatePath = null, string? accumulatorCsvPath = null, string? signatureDbPath = null,
         ScanCacheStore? scanCache = null)
     {
@@ -55,6 +85,20 @@ public sealed class UpdateClientService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (_trustedCert is null)
+        {
+            // Khong co neo tin cay -> khong quay vong lap vo ich moi 6 tieng,
+            // nhung PHAI de lai dau vet ro rang: day la trang thai suy giam,
+            // khong phai "moi thu binh thuong".
+            Status.LastResult = "Kenh cap nhat DA TAT: chua cau hinh certificate ky goi cap nhat";
+            _logger.LogWarning(
+                "Kenh cap nhat CSDL DA TAT vi thieu cau hinh UpdateSigning:CertPath / " +
+                "UpdateSigning:CertPasswordEnvVar — service van quet va bao ve binh thuong, " +
+                "nhung CSDL chu ky se KHONG duoc cap nhat tu dong.");
+            _audit.Log("update", "Kenh cap nhat DA TAT: thieu certificate ky goi cap nhat (fail-closed)");
+            return;
+        }
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -73,6 +117,34 @@ public sealed class UpdateClientService : BackgroundService
 
     public async Task<UpdateStatus> CheckAndApplyAsync(CancellationToken ct)
     {
+        // Cung guard nhu ExecuteAsync — endpoint /api/update/check-now goi
+        // thang vao day, khong di qua vong lap nen.
+        if (_trustedCert is null)
+        {
+            Status.LastResult = "Kenh cap nhat DA TAT: chua cau hinh certificate ky goi cap nhat";
+            return Status;
+        }
+
+        // [SUA LOI NGHIEM TRONG] TRUOC DAY co Status.CheckInProgress duoc GAN
+        // o day va xoa o finally, nhung KHONG MOT NOI NAO trong toan bo ma
+        // nguon doc no — no khong phai la mot khoa, chi la mot bao cao trang
+        // thai khong ai xem. Nghia la POST /api/update/check-now co the chay
+        // DONG THOI voi vong lap nen (ExecuteAsync): hai luot cap nhat cung
+        // ghi vao _accumulatorCsvPath, cung tao file CSDL tam, va cung goi
+        // RebuildAndSwap — trong do co UnmapSignatureDb() / File.Move /
+        // LoadSignatureDb(). Hai luong dan xen trong day thao tac do co the
+        // de lai signatures.avsigdb la file tam do dang cua luot kia, hoac
+        // de engine o trang thai khong co CSDL nao duoc nap.
+        //
+        // Sua: mot khoa THAT SU. Luot goi thu hai khong xep hang doi (khong
+        // co ich gi khi cung kiem tra mot phien ban) ma tra ve ngay trang
+        // thai hien tai — dung ngu nghia ma CheckInProgress ham y tu dau.
+        if (!await _updateGate.WaitAsync(0, ct))
+        {
+            Status.LastResult = "Dang co mot luot kiem tra cap nhat chay — bo qua yeu cau nay";
+            return Status;
+        }
+
         Status.CheckInProgress = true;
         try
         {
@@ -98,6 +170,7 @@ public sealed class UpdateClientService : BackgroundService
         finally
         {
             Status.CheckInProgress = false;
+            _updateGate.Release();
         }
     }
 
@@ -111,7 +184,7 @@ public sealed class UpdateClientService : BackgroundService
             return false;
         }
 
-        if (!UpdatePackageVerifier.TryVerifyAndExtract(pkg, _trustedCert, out var csvBytes))
+        if (!TryVerifyPackage(pkg, out var csvBytes))
         {
             _audit.Log("update", $"ERR-UPD-01: goi {pkgName} KHONG hop le chu ky so — tu choi ap dung");
             _logger.LogWarning("Goi CSDL {Pkg} khong verify duoc chu ky, bi tu choi", pkgName);
@@ -150,12 +223,26 @@ public sealed class UpdateClientService : BackgroundService
         // file da tung ghi (thanh cong hay dang do) roi ghi lai VOI CUNG
         // input luon cho ra CUNG mot ket qua (idempotent khi retry).
         var accumulated = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        int rejectedExisting = 0;
         if (File.Exists(_accumulatorCsvPath))
         {
             foreach (var line in await File.ReadAllLinesAsync(_accumulatorCsvPath, ct))
             {
-                AddCsvLine(accumulated, line);
+                if (!AddCsvLine(accumulated, line)) rejectedExisting++;
             }
+        }
+
+        // Dong hong TRONG FILE TICH LUY DA CO SAN tren dia la dau hieu file
+        // bi can thiep hoac hong — khong phai loi cua goi dang tai. Bao dong
+        // ro rang; file van dung duoc (dong hong bi loai) nhung su viec phai
+        // duoc ghi nhan de dieu tra.
+        if (rejectedExisting > 0)
+        {
+            _audit.Log("update",
+                $"CANH BAO: {rejectedExisting} dong KHONG hop le trong {_accumulatorCsvPath} — da loai bo, file tich luy chu ky co the da bi can thiep");
+            _logger.LogError(
+                "{Count} dong khong hop le trong file tich luy chu ky {Path} — da loai bo",
+                rejectedExisting, _accumulatorCsvPath);
         }
 
         for (int v = fromVersion + 1; v <= toVersion; v++)
@@ -168,7 +255,7 @@ public sealed class UpdateClientService : BackgroundService
                 return false;
             }
 
-            if (!UpdatePackageVerifier.TryVerifyAndExtract(pkg, _trustedCert, out var csvBytes))
+            if (!TryVerifyPackage(pkg, out var csvBytes))
             {
                 _audit.Log("update", $"ERR-UPD-01: goi {pkgName} KHONG hop le chu ky so — tu choi ap dung, dung luong incremental");
                 _logger.LogWarning("Goi delta {Pkg} khong verify duoc chu ky, bi tu choi", pkgName);
@@ -177,7 +264,17 @@ public sealed class UpdateClientService : BackgroundService
 
             var lines = System.Text.Encoding.UTF8.GetString(csvBytes)
                 .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            foreach (var line in lines) AddCsvLine(accumulated, line);
+            int rejected = 0;
+            foreach (var line in lines) { if (!AddCsvLine(accumulated, line)) rejected++; }
+            if (rejected > 0)
+            {
+                // Goi da qua verify chu ky nhung chua dong sai dinh dang —
+                // khong duoc am tham ap dung mot phan. Dung luong lai.
+                _audit.Log("update",
+                    $"ERR-UPD: goi {pkgName} chua {rejected} dong CSV khong hop le — tu choi ap dung, dung luong incremental");
+                _logger.LogError("Goi delta {Pkg} chua {Count} dong khong hop le, bi tu choi", pkgName, rejected);
+                return false;
+            }
         }
 
         await File.WriteAllLinesAsync(_accumulatorCsvPath, accumulated.Values, ct);
@@ -195,13 +292,45 @@ public sealed class UpdateClientService : BackgroundService
     // nhan gia tri moi nhat neu delta cap nhat lai severity/threat_id cho
     // cung mot hash), tranh nhan doi hang loat khi retry (xem ghi chu o
     // ApplyDeltaSequenceAsync).
-    private static void AddCsvLine(Dictionary<string, string> accumulated, string line)
+    // [SUA LOI NGHIEM TRONG] TRUOC DAY ham nay chap nhan BAT KY chuoi nao:
+    // key la phan truoc dau phay dau tien, gia tri la ca dong, khong kiem
+    // tra dinh dang gi. Ket hop voi viec engine (SignatureDb::BuildFromCsv)
+    // AM THAM BO QUA moi dong CSV hong roi van bao build thanh cong, day la
+    // mot duong VO HIEU HOA CO MUC TIEU tung chu ky mot:
+    //   ghi mot dong "<hash_that>,notanumber,5" vao signature_accumulator.csv
+    //   -> dong nay GHI DE ban ghi that (cung key hash) -> BuildFromCsv bo
+    //   qua vi threat_id khong parse duoc -> CSDL moi thieu DUNG chu ky do,
+    //   record_count nho hon 1 don vi, va log ghi "cap nhat thanh cong".
+    // File nay la GOC TIN CAY THAT SU cua CSDL chu ky (chu ky so chi gac cac
+    // GOI delta, chua bao gio gac chinh file tich luy nay).
+    //
+    // Sua: validate dung dinh dang truoc khi nhan. Dong khong hop le bi TU
+    // CHOI (khong ghi de duoc ban ghi that) va duoc dem lai de phia goi bao
+    // dong ro rang thay vi mat chu ky trong im lang.
+    private static bool AddCsvLine(Dictionary<string, string> accumulated, string line)
     {
         var trimmed = line.Trim();
-        if (trimmed.Length == 0) return;
-        int commaIdx = trimmed.IndexOf(',');
-        string key = commaIdx > 0 ? trimmed[..commaIdx] : trimmed;
-        accumulated[key] = trimmed;
+        if (trimmed.Length == 0) return true; // dong trong: bo qua, khong phai loi
+
+        var parts = trimmed.Split(',');
+        if (parts.Length != 3) return false;
+
+        string hash = parts[0].Trim();
+        if (hash.Length != 64) return false;
+        foreach (char c in hash)
+        {
+            bool isHex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+            if (!isHex) return false;
+        }
+
+        // Phai khop dung pham vi ma engine dung: threat_id la uint32,
+        // severity la uint8. Gia tri ngoai pham vi se bi BuildFromCsv nem/bo
+        // qua — chan ngay tai day de khong bao gio ghi de duoc ban ghi that.
+        if (!uint.TryParse(parts[1].Trim(), out _)) return false;
+        if (!byte.TryParse(parts[2].Trim(), out _)) return false;
+
+        accumulated[hash] = $"{hash},{parts[1].Trim()},{parts[2].Trim()}";
+        return true;
     }
 
     // API-02/ERR-UPD-02: "ghi CSDL moi vao file tam roi doi ten hoan doi

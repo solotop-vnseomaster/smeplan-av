@@ -14,7 +14,14 @@
   --pink: #ff2da6;      /* accent vien — trang tri/glow, han che dung lam chu */
   --text-hi: #eaf2ff;
   --text-mid: #8fa3c4;
-  --text-dim: #5f7292;
+  /* [SUA LOI CAO — TIEP CAN] TRUOC DAY #5f7292: chi dat 3.64:1 tren nen
+     panel (--bg-2 #121826) va 3.96:1 tren nen chinh — DUOI nguong WCAG AA
+     4.5:1 cho chu thuong. Mau nay duoc dung cho nhan muc rui ro, nhan cot
+     bang, mo ta toggle va chu thich thoi gian — tuc la dung o CHINH nhung
+     cho noi cho nguoi dung biet moi thu dang o tinh trang nao.
+     #7387ab: 4.88:1 tren nen panel, 5.31:1 tren nen chinh — dat AA o ca hai,
+     giu nguyen sac xanh xam cua he mau. */
+  --text-dim: #7387ab;
   --ok: #00ffa3;
   --ok-badge-bg: #00c87f;
   --warn: #ffd84d;
@@ -213,7 +220,10 @@ body::before {
 .ring-track { fill: none; stroke: rgba(120,170,255,0.12); stroke-width: 8; }
 .ring-progress {
   fill: none; stroke: var(--cyan); stroke-width: 8; stroke-linecap: round;
-  stroke-dasharray: 326.7; stroke-dashoffset: 20;
+  /* [SUA LOI] stroke-dashoffset TRUOC DAY dat cung 20 (~94% vong tron),
+     nen vong "bao ve" luon hien gan day du bat ke trang thai that. Mac dinh
+     gio la 326.7 (= chu vi -> vong RONG); JavaScript dat gia tri that. */
+  stroke-dasharray: 326.7; stroke-dashoffset: 326.7;
   filter: drop-shadow(0 0 8px rgba(0, 229, 255,0.7));
   transition: stroke-dashoffset .6s ease, stroke .3s ease;
 }
@@ -224,6 +234,9 @@ body::before {
 .ring-center strong { font-size: 14.5px; }
 .ring-progress.risk-safe { stroke: var(--ok); filter: drop-shadow(0 0 8px rgba(0,255,163,0.7)); }
 .ring-progress.risk-warn { stroke: var(--warn); filter: drop-shadow(0 0 8px rgba(255,216,77,0.7)); }
+.ring-progress.state-critical { stroke: var(--danger); filter: drop-shadow(0 0 8px rgba(255,77,106,0.7)); }
+.ring-progress.state-degraded { stroke: var(--warn); filter: drop-shadow(0 0 8px rgba(255,216,77,0.7)); }
+.ring-progress.state-ok { stroke: var(--ok); filter: drop-shadow(0 0 8px rgba(0,255,163,0.7)); }
 .ring-progress.risk-danger { stroke: var(--danger); filter: drop-shadow(0 0 8px rgba(255,77,106,0.7)); }
 
 .sev-badge { font-size: 12.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px; flex-shrink: 0; }

@@ -6,7 +6,7 @@ thay vì bị bỏ sót âm thầm"*. Bảng dưới đối chiếu từng tiêu
 
 | Tiêu chí DoD | Trạng thái | Ghi chú |
 |---|---|---|
-| Driver ELAM/minifilter đã qua attestation/WHQL | ❌ Chưa đạt — hạn chế đã biết | Không có WDK, EV Code Signing Certificate, hay tài khoản Microsoft Partner Center trong môi trường này. Mã nguồn driver đã viết đầy đủ ở `app/drivers/`, chưa biên dịch/ký. |
+| Driver ELAM/minifilter đã qua attestation/WHQL | ❌ Chưa đạt — hạn chế đã biết | Không có WDK, EV Code Signing Certificate, hay tài khoản Microsoft Partner Center trong môi trường này. **Đính chính:** trước đây dòng này ghi "mã nguồn driver đã viết đầy đủ" — không đúng. Nửa user-mode **không tồn tại**: không có chỗ nào trong `app/service/`, `app/ui/`, `app/browser-extension/` gọi `FilterConnectCommunicationPort`/`FilterGetMessage`/`FilterReplyMessage`, nên không có client nào kết nối cổng giao tiếp của minifilter. Đó là nợ tích hợp, không phải thiếu công cụ. |
 | Rule heuristic/YARA đã qua log-only đủ lâu | ⚠️ Cơ chế đã cài đặt, chưa có dữ liệu vận hành thật | State machine `LogOnly → Enforce` được mô hình trong `RuleLifecycleState` (`Models/Enums.cs`); chưa có rule mới nào cần enforce vì đây là bản đầu tiên — không có gì để "log-only đủ lâu" trên. |
 | Quarantine đã test khôi phục (file thường + file hệ thống) | ✅ Đạt | `QuarantineManagerTests.cs`: cả hai kịch bản (`NormalFile_QuarantinedThenRestored...`, `SystemProtectedPath_ClassifiedAsPendingManualConfirmation`) pass. |
 | Update service đã test incremental delta + fallback full + verify chữ ký | ✅ Đạt | `UpdateClientServiceTests.cs`: 3 test pass (delta tuần tự, fallback full khi >30 phiên bản, từ chối gói ký sai). |
@@ -15,6 +15,32 @@ thay vì bị bỏ sót âm thầm"*. Bảng dưới đối chiếu từng tiêu
 | Bộ test EICAR chạy qua cả 3 luồng (full scan, Downloads, real-time) | ⚠️ Đạt 2/3 | Full scan: đạt (`EngineTests.cs` + `/api/scan/file` demo qua UI thật, xem transcript phiên làm việc). Downloads: đạt về mặt logic (`DownloadsWatcherService` dùng chung pipeline đã test), chưa test end-to-end tự động hoá (cần copy file thật vào thư mục Downloads và quan sát). Real-time (minifilter): ❌ không thể test — cần driver kernel-mode đã nạp thật (xem TC-03 trong `app/drivers/README.md`). |
 
 ## Tóm tắt hạn chế theo nguyên nhân gốc
+
+### Đính chính: không phải mọi thiếu sót đều do thiếu công cụ
+
+Ba hạng mục dưới đây là **lỗi mã nguồn / nợ tích hợp**, sẽ vẫn còn nguyên
+kể cả khi có đủ WDK + EV cert + MVI. Chúng cần được sửa và kiểm thử riêng:
+
+- `minifilter.c` — `SmePlanAvMfProcessNotifyCallbackEx` dùng `status`/`reply`
+  khi chưa gán (thiếu hẳn lời gọi `SmePlanAvMfQueryServiceDecision`). Với
+  `/WX` của WDK đây là C4700 → build fail. **Đã sửa.**
+- `minifilter.inf` — `StartType` từng là `0` (BOOT_START) trong khi chưa có
+  client user-mode nào. **Đã đổi sang `3` (DEMAND_START)** và đã thêm bypass
+  `STATUS_PORT_DISCONNECTED` ở cả hai callback; chỉ đưa về BOOT_START sau khi
+  nửa user-mode tồn tại và đã kiểm thử boot trên máy ảo.
+- **Lệch giao thức CHƯA sửa được:** driver đặt timeout `50ms` cho
+  `FltSendMessage` (`minifilter.c`, `SmePlanAvMfQueryServiceDecision`) và coi
+  hết giờ là từ chối, trong khi `PermissionRequestBroker` được thiết kế cho
+  hộp thoại hỏi người dùng **tối đa 30 giây**. Mọi quyết định cần hỏi người
+  dùng sẽ luôn hết giờ → deny. Sửa đúng đòi hỏi giao thức bất đồng bộ (driver
+  trả "đang chờ", service trả lời sau) chứ không phải nâng timeout — giữ một
+  IRP pre-create 30 giây là không chấp nhận được. Cần thiết kế lại cùng lúc
+  với việc viết client user-mode.
+- `ob_callbacks.c` — `SmePlanAvObPreOperationCallback` luôn trả
+  `OB_PREOP_SUCCESS` và không bao giờ tước bớt `DesiredAccess`. Đây là
+  **quyết định có chủ ý** (ghi rõ trong comment: không chặn để tránh phá vỡ
+  công cụ debug hợp lệ, chỉ ghi nhận và đẩy lên event bus). Nêu ở đây để
+  không bị đọc nhầm thành callback bảo vệ tiến trình đang có tác dụng chặn.
 
 1. **Không có WDK** → không biên dịch được driver kernel-mode thật (ELAM,
    minifilter). Real-time protection hiện chỉ có lớp fallback user-mode

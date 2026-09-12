@@ -20,8 +20,26 @@ typedef struct _SMEPLANAV_OB_PROCESS_INFO {
     BOOLEAN Whitelisted;    // PUSH tu service sau khi da qua whitelist chu ky so (dung chung)
 } SMEPLANAV_OB_PROCESS_INFO, *PSMEPLANAV_OB_PROCESS_INFO;
 
+// entity_key tuong thich EventBus.CorrelationEvent ben user-mode
+// (Extensions/EventBus.cs) — dung cap (PID, thoi diem tao) theo dung
+// nguyen tac "PID co the bi tai su dung" da neu trong tai lieu moi.txt.
+typedef struct _SMEPLANAV_OB_SUSPICIOUS_ACCESS_EVENT {
+    HANDLE RequesterProcessId;
+    HANDLE TargetProcessId;
+    LARGE_INTEGER TargetCreateTime;
+    ULONG DesiredAccessMask;
+} SMEPLANAV_OB_SUSPICIOUS_ACCESS_EVENT, *PSMEPLANAV_OB_SUSPICIOUS_ACCESS_EVENT;
+
+// So su kien truy cap dang ngo giu lai toi da trong vong dem cua driver.
+#define SMEPLANAV_OB_MAX_EVENTS 256
+
 typedef struct _SMEPLANAV_OB_CONTEXT {
     PVOID RegistrationHandle; // tra ve tu ObRegisterCallbacks
+    // [SUA LOI NGHIEM TRONG] Xem SmePlanAvObDriverUnload: viec go
+    // PsSetCreateProcessNotifyRoutineEx phai biet no da tung duoc dang ky hay
+    // chua, va phai kiem tra ket qua go — go mot routine chua dang ky, hoac
+    // unload khi go that bai, deu dan toi bugcheck o tien trinh ke tiep.
+    BOOLEAN ProcessNotifyRegistered;
     PDEVICE_OBJECT DeviceObject;
 
     KSPIN_LOCK TableLock;
@@ -29,6 +47,30 @@ typedef struct _SMEPLANAV_OB_CONTEXT {
 
     LIST_ENTRY PendingNotifyIrps; // "chi ghi nhan va publish vao event bus" — xem ob_callbacks.c
     KSPIN_LOCK PendingNotifyLock;
+
+    //
+    // [SUA LOI CAO] Vong dem su kien truy cap dang ngo.
+    //
+    // TRUOC DAY SmePlanAvObLogSuspiciousAccess la mot HAM RONG (chi
+    // UNREFERENCED_PARAMETER ba tham so). Nghia la toan bo tang phat hien
+    // process-hollowing chay dung, ket luan dung, roi VUT KET QUA DI: khong
+    // luu, khong gui len user-mode, khong log. Mot phat hien dung ma khong
+    // ai biet thi khong khac gi khong phat hien.
+    //
+    // Vong dem nay giu cac su kien gan nhat de service doc ra qua
+    // IOCTL_SMEPLANAV_OB_READ_SUSPICIOUS_ACCESS. Chon vong dem + poll thay
+    // vi hang doi IRP pending vi hang doi IRP truoc day duoc "khai bao"
+    // nhung khong bao gio duoc trien khai, va cai gia cua no la mot loi
+    // giao thuc IRP nghiem trong (xem SmePlanAvObDeviceControl).
+    //
+    // Ghi vao vong dem xay ra tu PreOperationCallback — co the o IRQL cao —
+    // nen dung spinlock va bo nho tinh (khong cap phat).
+    //
+    KSPIN_LOCK EventLock;
+    SMEPLANAV_OB_SUSPICIOUS_ACCESS_EVENT Events[SMEPLANAV_OB_MAX_EVENTS];
+    ULONG EventHead;    // vi tri ghi tiep theo
+    ULONG EventCount;   // so su kien dang giu (toi da SMEPLANAV_OB_MAX_EVENTS)
+    ULONG EventDropped; // so su kien bi ghi de vi service doc khong kip
 } SMEPLANAV_OB_CONTEXT, *PSMEPLANAV_OB_CONTEXT;
 
 // --- IOCTL giua service (user-mode) va driver nay ---
@@ -45,12 +87,6 @@ typedef struct _SMEPLANAV_OB_PUSH_WHITELIST_REQUEST {
 // entity_key tuong thich EventBus.CorrelationEvent ben user-mode
 // (Extensions/EventBus.cs) — dung cap (PID, thoi diem tao) theo dung
 // nguyen tac "PID co the bi tai su dung" da neu trong tai lieu moi.txt.
-typedef struct _SMEPLANAV_OB_SUSPICIOUS_ACCESS_EVENT {
-    HANDLE RequesterProcessId;
-    HANDLE TargetProcessId;
-    LARGE_INTEGER TargetCreateTime;
-    ULONG DesiredAccessMask;
-} SMEPLANAV_OB_SUSPICIOUS_ACCESS_EVENT, *PSMEPLANAV_OB_SUSPICIOUS_ACCESS_EVENT;
 
 // --- Khai bao ham chinh ---
 DRIVER_INITIALIZE DriverEntry;

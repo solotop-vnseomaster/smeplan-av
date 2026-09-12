@@ -68,7 +68,7 @@ public sealed class DiscoveryListener : IDisposable
         {
             var text = Encoding.ASCII.GetString(buffer);
             string? server = ExtractHeader(text, "SERVER:");
-            return new DiscoveredDevice(sourceIp, server, "ssdp");
+            return new DiscoveredDevice(sourceIp, SanitizeUntrustedDeviceString(server), "ssdp");
         }
 
         // mDNS la dinh dang DNS nhi phan — khong parse day du cau truc goi
@@ -84,10 +84,41 @@ public sealed class DiscoveryListener : IDisposable
             while (start > 0 && IsPrintableHostChar(ascii[start - 1])) start--;
             if (idx + 6 <= ascii.Length) name = ascii[start..(idx + 6)];
         }
-        return new DiscoveredDevice(sourceIp, name, "mdns");
+        return new DiscoveredDevice(sourceIp, SanitizeUntrustedDeviceString(name), "mdns");
     }
 
     private static bool IsPrintableHostChar(char c) => char.IsLetterOrDigit(c) || c == '-' || c == '.';
+
+    // [SUA LOI TRUNG BINH] Ca "name" (mDNS) lan "server" (header SSDP
+    // SERVER:) den tu goi tin UDP QUANG BA THU DONG cua BAT KY thiet bi nao
+    // tren LAN (khong xac thuc, khong kiem soat duoc) — gia tri nay duoc
+    // luu trong NetworkDeviceInfo.DiscoveredName va lo ra qua API cho UI
+    // hien thi. IsPrintableHostChar da gioi han "name" (mDNS) o mot tap ky
+    // tu an toan, nhung "server" (SSDP, doc thang tu header van ban, KHONG
+    // qua bo loc nao) thi chua — mot thiet bi gia mao co the nhet ky tu HTML/
+    // script vao header SERVER: cua phan hoi SSDP. Loc bo ky tu dieu khien
+    // (co the gia mao them dong/header) VA ky tu co the dien giai thanh
+    // HTML boi mot sink UI (< > & " ' `), gioi han do dai — ap dung cho CA
+    // HAI nguon (mDNS lan SSDP) de phong thu theo chieu sau, du mDNS hien
+    // da duoc gioi han rieng boi IsPrintableHostChar.
+    private const int MaxDeviceStringLength = 128;
+
+    private static string? SanitizeUntrustedDeviceString(string? raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return null;
+
+        var sb = new StringBuilder(Math.Min(raw.Length, MaxDeviceStringLength));
+        foreach (var c in raw)
+        {
+            if (sb.Length >= MaxDeviceStringLength) break;
+            if (char.IsControl(c)) continue;
+            if (c is '<' or '>' or '&' or '"' or '\'' or '`') continue;
+            sb.Append(c);
+        }
+
+        var result = sb.ToString().Trim();
+        return result.Length == 0 ? null : result;
+    }
 
     private static string? ExtractHeader(string text, string headerPrefix)
     {

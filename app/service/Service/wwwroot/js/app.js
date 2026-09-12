@@ -146,9 +146,47 @@ function setConnected(ok) {
 }
 
 // ---------- Dashboard ----------
+// [SUA LOI CHAN PHAT HANH] TRUOC DAY ham nay chi doc updateStatus. Bon
+// truong trang thai suy giam ma service ky cong phoi ra (updateSigningConfigured,
+// updateSigningDisabledReason, unprotectedDataDirectories, signatureDbMissing)
+// KHONG duoc tham chieu o bat ky dau trong wwwroot, va #protectionState /
+// #protectionRing la markup tinh — nen giao dien luon hien "Đang bảo vệ" +
+// vong tron ~94% ke ca khi CSDL chu ky khong nap duoc, kenh cap nhat da tat,
+// hay thu muc du lieu khong khoa duoc ACL.
+//
+// Dieu do khong chi la loi hien thi: nhieu quyet dinh fail-open trong
+// Program.cs duoc bien minh bang gia dinh "trang thai suy giam PHAI nhin
+// thay duoc tu UI". Gio UI thuc su doc va hien thi chung.
+const RING_CIRCUMFERENCE_PROTECTION = 326.7; // 2 * PI * 52, khop r=52 cua SVG
+
+const PROTECTION_LEVEL_META = {
+  ok:       { text: "Đang bảo vệ",          cls: "state-ok",       fill: 1 },
+  degraded: { text: "Bảo vệ suy giảm",      cls: "state-degraded", fill: 0.6 },
+  critical: { text: "KHÔNG được bảo vệ",    cls: "state-critical", fill: 0.15 },
+};
+
+function renderProtectionState(status) {
+  const meta = PROTECTION_LEVEL_META[status.protectionLevel] || PROTECTION_LEVEL_META.critical;
+
+  const label = $("#protectionState");
+  label.textContent = meta.text;
+
+  const ring = $("#protectionRing");
+  ring.style.strokeDashoffset = String(RING_CIRCUMFERENCE_PROTECTION * (1 - meta.fill));
+  ring.classList.remove("state-ok", "state-degraded", "state-critical");
+  ring.classList.add(meta.cls);
+
+  const list = status.degradations || [];
+  $("#protectionDegradations").innerHTML = list.length
+    ? list.map(d => `<div class="meta-row"><span>${esc(d.message)}</span><b class="pill ${d.severity === "critical" ? "pill-danger" : "pill-warn"}">${d.severity === "critical" ? "Không hoạt động" : "Suy giảm"}</b></div>`).join("")
+    : `<div class="meta-row"><span>Mọi lớp bảo vệ đang hoạt động</span><b class="pill pill-ok">Hoạt động</b></div>`;
+}
+
 async function refreshStatus() {
   const status = await api("/api/status");
   setConnected(true);
+
+  renderProtectionState(status);
 
   const upd = status.updateStatus;
   $("#statSigVersion").textContent = "v" + (upd?.currentVersion ?? 0);
@@ -441,6 +479,8 @@ function renderFlaggedList() {
   }
 }
 
+let flaggedPreviousFocus = null;
+
 function showFlaggedDetail(item) {
   $("#fdIcon").textContent = verdictIcon(item.verdict);
   $("#fdVerdict").textContent = item.verdict;
@@ -449,9 +489,49 @@ function showFlaggedDetail(item) {
   $("#fdHash").textContent = item.sha256Hex || "(không có)";
   $("#fdTime").textContent = new Date(item.flaggedAtUnixMs).toLocaleString("vi-VN");
   $("#fdReason").textContent = item.reason;
+  // [SUA LOI A11Y — GUARD DUNG, TRUOC DAY AP THIEU DUONG] showPermissionModal
+  // co day du: nho lai phan tu dang focus, dua focus vao hop thoai, giu Tab
+  // lai ben trong, Escape de dong, va tra focus ve cho cu khi dong. Hop
+  // thoai nay TRUOC DAY chi them class "show" — nguoi dung ban phim bi bo
+  // lai o phia sau lop phu, khong Tab toi duoc nut Dong va khong co Escape.
+  // Cung mot khuon, ap cho ca hai.
+  flaggedPreviousFocus = document.activeElement;
   $("#flaggedDetailModal").classList.add("show");
+  $("#fdClose").focus();
+  document.addEventListener("keydown", onFlaggedModalKeydown, true);
 }
-$("#fdClose").addEventListener("click", () => $("#flaggedDetailModal").classList.remove("show"));
+
+
+function hideFlaggedDetail() {
+  $("#flaggedDetailModal").classList.remove("show");
+  document.removeEventListener("keydown", onFlaggedModalKeydown, true);
+  if (flaggedPreviousFocus && document.contains(flaggedPreviousFocus)) {
+    try { flaggedPreviousFocus.focus(); } catch { /* phan tu da bi thay the */ }
+  }
+  flaggedPreviousFocus = null;
+}
+
+// Hop thoai nay chi hien thi thong tin (khong co quyet dinh bao mat nao),
+// nen Escape dong binh thuong — khac voi #permissionModal, noi Escape phai
+// dong nghia voi "Chan".
+function onFlaggedModalKeydown(e) {
+  if (!$("#flaggedDetailModal").classList.contains("show")) return;
+
+  if (e.key === "Escape") {
+    e.preventDefault();
+    hideFlaggedDetail();
+    return;
+  }
+
+  // Chi co MOT phan tu focus duoc (nut Dong) nen focus trap rut gon thanh:
+  // moi lan Tab deu quay ve chinh no.
+  if (e.key === "Tab") {
+    e.preventDefault();
+    $("#fdClose").focus();
+  }
+}
+
+$("#fdClose").addEventListener("click", hideFlaggedDetail);
 
 // ---------- Quarantine (UI-03) ----------
 async function renderQuarantine() {
@@ -493,9 +573,14 @@ async function renderQuarantine() {
     delBtn.textContent = "Xoá vĩnh viễn";
     delBtn.style.marginLeft = "6px";
     delBtn.onclick = () => {
+      // [SUA LOI CAO] TRUOC DAY hop thoai xac nhan xoa VINH VIEN khong he
+      // neu file nao sap bi xoa. Bang quarantine co the co hang chuc dong
+      // va tu lam moi moi 1.5s — nguoi dung xac nhan mot thao tac khong
+      // hoan tac duoc ma khong biet no ap len file nao. Luon neu ro duong
+      // dan trong chinh cau hoi.
       const msg = r.status === "PendingManualConfirmation"
-        ? "File gốc VẪN CÒN nguyên vị trí (chưa từng bị cách ly) — thao tác này chỉ xoá mục theo dõi này, không đụng tới file. Tiếp tục?"
-        : "Xoá vĩnh viễn file đã cách ly này, KHÔNG THỂ khôi phục lại sau đó. Tiếp tục?";
+        ? `File gốc VẪN CÒN nguyên vị trí (chưa từng bị cách ly) — thao tác này chỉ xoá mục theo dõi, không đụng tới file.\n\nFile: ${r.originalPath}\n\nTiếp tục?`
+        : `Xoá VĨNH VIỄN file đã cách ly, KHÔNG THỂ khôi phục.\n\nFile: ${r.originalPath}\n\nTiếp tục?`;
       if (!confirm(msg)) return;
       api(`/api/quarantine/${r.quarantineId}`, { method: "DELETE" })
         .then(renderQuarantine)
@@ -508,11 +593,38 @@ async function renderQuarantine() {
 }
 
 // ---------- Rules (UI-04) ----------
+// [SUA LOI — GUARD DUNG, TRUOC DAY AP THIEU DUONG] #usbAddBtn kiem tra dau
+// vao truoc khi gui (thieu VID/PID thi bao loi va dung lai). Hai form them
+// rule con lai thi khong: chung THAY THE o trong bang cac chuoi giu cho
+// "(trống)" / "(không rõ)" roi gui di, tao ra nhung rule vinh vien khong bao
+// gio khop cai gi — rac trong CSDL chinh sach, va nguoi dung tin rang minh
+// vua them mot rule co tac dung.
+// Voi rule firewall con te hon: appSha256 = "(trống)" tao mot rule cho phep/
+// chan gan voi mot hash khong ton tai, nhung no VAN duoc tinh vao thu tu uu
+// tien khi doi chieu.
+const SHA256_HEX = /^[0-9a-fA-F]{64}$/;
+
 $("#ruleAddBtn").addEventListener("click", async () => {
+  const hash = $("#ruleHash").value.trim();
+  const publisher = $("#rulePublisher").value.trim();
+  const path = $("#rulePath").value.trim();
+
+  if (!hash && !publisher && !path) {
+    toast("Thiếu thông tin", "Cần ít nhất một trong: SHA-256, publisher thumbprint, hoặc đường dẫn file.", "warn");
+    return;
+  }
+  if (hash && !SHA256_HEX.test(hash)) {
+    toast("SHA-256 không hợp lệ", "Hash phải gồm đúng 64 ký tự hex.", "warn");
+    return;
+  }
+
   const rule = {
-    sha256Hash: $("#ruleHash").value.trim() || "(trống)",
-    publisherThumbprint: $("#rulePublisher").value.trim() || null,
-    filePath: $("#rulePath").value.trim() || "(không rõ)",
+    // Sha256Hash/FilePath la truong bat buoc phia server; de trong bang
+    // chuoi rong (khong phai chuoi giu cho gia) khi nguoi dung dinh danh
+    // rule bang tieu chi khac.
+    sha256Hash: hash,
+    publisherThumbprint: publisher || null,
+    filePath: path,
     action: $("#ruleAction").value,
     scope: $("#ruleScope").value,
     createdBy: "User",
@@ -629,22 +741,80 @@ $("#updCheckBtn").addEventListener("click", async () => {
 // khi nhan input, chong malware tu dong gui phim Enter/click gia lap.
 let currentPermissionRequest = null;
 
+// [SUA LOI CAO — TIEP CAN + CHONG TU DONG HOA]
+// Hop thoai nay TRUOC DAY: khong chuyen focus vao trong, khong bay focus
+// (Tab di thang ra trang nen phia sau), khong dong bang Escape, va chi khoa
+// DUY NHAT nut "Cho phep luon" trong 0.5s. Hai hau qua:
+//   - nguoi dung dung ban phim/trinh doc man hinh khong the su dung duoc
+//     hop thoai quyet dinh cho/chan quan trong nhat cua san pham;
+//   - co che chong tu dong hoa bi qua mat de dang bang cach click sang
+//     "Chi lan nay" (van cap quyen chay) thay vi "Cho phep luon".
+let permissionPreviousFocus = null;
+const PERMISSION_BUTTON_IDS = ["#pmBlock", "#pmOnce", "#pmAllow"];
+
 function showPermissionModal(req) {
   currentPermissionRequest = req;
   $("#pmPath").textContent = req.processPath;
   $("#pmPublisher").textContent = req.publisherName || "Không xác định";
   $("#pmHash").textContent = shortHash(req.sha256Hex);
+
+  // Nho lai noi dang focus de tra ve dung cho khi dong hop thoai.
+  permissionPreviousFocus = document.activeElement;
   $("#permissionModal").classList.add("show");
 
-  const allowBtn = $("#pmAllow");
-  allowBtn.disabled = true;
-  allowBtn.blur();
-  setTimeout(() => { if (currentPermissionRequest === req) allowBtn.disabled = false; }, 500);
+  // Khoa CA BA nut — xem ghi chu tren. Khoa mot nut chi doi huong tan cong.
+  const buttons = PERMISSION_BUTTON_IDS.map(id => $(id));
+  buttons.forEach(b => { b.disabled = true; b.blur(); });
+  setTimeout(() => {
+    if (currentPermissionRequest !== req) return;
+    buttons.forEach(b => { b.disabled = false; });
+    // Sau khi het khoa, dua focus vao lua chon AN TOAN NHAT ("Chan") —
+    // khong bao gio vao nut cap quyen.
+    $("#pmBlock").focus();
+  }, 500);
+
+  document.addEventListener("keydown", onPermissionModalKeydown, true);
 }
 
 function hidePermissionModal() {
   currentPermissionRequest = null;
   $("#permissionModal").classList.remove("show");
+  document.removeEventListener("keydown", onPermissionModalKeydown, true);
+  if (permissionPreviousFocus && document.contains(permissionPreviousFocus)) {
+    try { permissionPreviousFocus.focus(); } catch { /* phan tu da bi thay the */ }
+  }
+  permissionPreviousFocus = null;
+}
+
+// Escape = lua chon AN TOAN NHAT (Chan), khong phai "dong va bo qua": mot
+// yeu cau cap quyen bi bo lo khong duoc phep im lang tro thanh "cho phep".
+// Tab/Shift+Tab bi giu lai trong hop thoai (focus trap).
+function onPermissionModalKeydown(e) {
+  if (!currentPermissionRequest) return;
+
+  if (e.key === "Escape") {
+    e.preventDefault();
+    if (!$("#pmBlock").disabled) respondPermission("Block");
+    return;
+  }
+
+  if (e.key !== "Tab") return;
+
+  const focusable = PERMISSION_BUTTON_IDS.map(id => $(id)).filter(b => !b.disabled);
+  if (focusable.length === 0) { e.preventDefault(); return; }
+
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault();
+    first.focus();
+  } else if (!focusable.includes(document.activeElement)) {
+    e.preventDefault();
+    first.focus();
+  }
 }
 
 async function respondPermission(choice) {
@@ -709,6 +879,26 @@ async function refreshRiskScore() {
   $("#riskComponents").innerHTML = deducted.length
     ? deducted.map(c => `<div class="meta-row"><span>${esc(c.name)}</span><b class="pill pill-warn">-${esc(c.pointsDeducted)} · ${esc(c.detail)}</b></div>`).join("")
     : `<div class="meta-row"><span class="muted small">Không có mục nào đang trừ điểm — mọi lớp bảo vệ đều ổn.</span></div>`;
+}
+
+// ---------- Alert Center (EXT-EVT-01/02) ----------
+// [SUA LOI] EventBus hop nhat cac su kien lien quan thanh mot canh bao duy
+// nhat va phoi qua GET /api/alerts, nhung KHONG co doan JavaScript nao goi
+// endpoint do — nguoi dung khong bao gio nhan duoc canh bao chu dong nao.
+// Poll cung nhip voi cac phan con lai cua dashboard va toast moi canh bao
+// MOI (theo entityKey) mot lan.
+const _seenAlertKeys = new Set();
+
+async function refreshAlerts() {
+  const alerts = await api("/api/alerts");
+  for (const a of alerts) {
+    const key = a.entityKey;
+    if (!key || _seenAlertKeys.has(key)) continue;
+    _seenAlertKeys.add(key);
+    const kind = (a.maxSeverity ?? 0) >= 3 ? "danger" : "warn";
+    const body = (a.summaryLines || []).slice(-3).join(" · ") || key;
+    toast("Cảnh báo bảo mật", body, kind);
+  }
 }
 
 // ---------- Gaming mode + Task scheduler (dashboard + Nang cao) ----------
@@ -781,14 +971,46 @@ async function renderFirewall() {
 }
 
 $("#fwAddBtn").addEventListener("click", async () => {
+  // Xem ghi chu [SUA LOI — GUARD DUNG, TRUOC DAY AP THIEU DUONG] tai #ruleAddBtn.
+  const sha = $("#fwSha256").value.trim();
+  if (!SHA256_HEX.test(sha)) {
+    toast("SHA-256 không hợp lệ", "Rule firewall phải gắn với một hash 64 ký tự hex của ứng dụng.", "warn");
+    return;
+  }
+
+  const rawStart = $("#fwPortStart").value.trim();
+  const rawEnd = $("#fwPortEnd").value.trim();
+  const portStart = rawStart ? Number(rawStart) : null;
+  const portEnd = rawEnd ? Number(rawEnd) : null;
+
+  const badPort = p => p !== null && (!Number.isInteger(p) || p < 1 || p > 65535);
+  if (badPort(portStart) || badPort(portEnd)) {
+    toast("Cổng không hợp lệ", "Cổng phải là số nguyên trong khoảng 1–65535.", "warn");
+    return;
+  }
+  if ((portStart === null) !== (portEnd === null)) {
+    toast("Dải cổng chưa đủ", "Nhập cả cổng đầu và cổng cuối, hoặc để trống cả hai.", "warn");
+    return;
+  }
+  if (portStart !== null && portStart > portEnd) {
+    toast("Dải cổng ngược", "Cổng đầu phải nhỏ hơn hoặc bằng cổng cuối.", "warn");
+    return;
+  }
+
+  const priority = Number($("#fwPriority").value.trim() || "100");
+  if (!Number.isInteger(priority) || priority < 0) {
+    toast("Độ ưu tiên không hợp lệ", "Độ ưu tiên phải là số nguyên không âm.", "warn");
+    return;
+  }
+
   const rule = {
-    appSha256: $("#fwSha256").value.trim() || "(trống)",
+    appSha256: sha,
     direction: $("#fwDirection").value,
     protocol: $("#fwProtocol").value,
-    remotePortStart: $("#fwPortStart").value.trim() ? Number($("#fwPortStart").value.trim()) : null,
-    remotePortEnd: $("#fwPortEnd").value.trim() ? Number($("#fwPortEnd").value.trim()) : null,
+    remotePortStart: portStart,
+    remotePortEnd: portEnd,
     action: $("#fwAction").value,
-    priority: Number($("#fwPriority").value.trim() || "100"),
+    priority,
     createdBy: "User",
   };
   await api("/api/firewall/rules", { method: "POST", body: JSON.stringify(rule) });
@@ -1057,6 +1279,17 @@ $("#phishUpdateBtn").addEventListener("click", async () => {
   }
 });
 
+// Tra ve true neu phan tu dang duoc focus nam BEN TRONG container da cho.
+// Dung de khong ve lai mot bang trong luc nguoi dung dang thao tac tren no
+// (xem ghi chu trong tick()). Container khong ton tai => false.
+function containerHasFocus(selector) {
+  const el = document.querySelector(selector);
+  if (!el) return false;
+  const active = document.activeElement;
+  if (!active || active === document.body) return false;
+  return el.contains(active);
+}
+
 // ---------- Polling loop ----------
 // [SUA LOI HIEU NANG] TRUOC DAY tick() luon lam moi VA VE LAI TOAN BO 4
 // bang "nang" (quarantine/rules/downloads/flagged — moi bang xoa het
@@ -1081,13 +1314,25 @@ async function tick() {
       pollPermissionRequests(),
       pollAuditForToasts(),
       refreshRiskScore(),
+      refreshAlerts(),
       refreshGamingAndScheduler(),
       refreshPhishStats(),
     ];
-    if (currentView === "quarantine") tasks.push(renderQuarantine());
-    if (currentView === "rules") tasks.push(renderRules());
-    if (currentView === "downloads") tasks.push(renderDownloads());
-    if (currentView === "scan") tasks.push(renderFlaggedItems());
+    // [SUA LOI CAO — TIEP CAN] Bon ham render duoi day XOA innerHTML roi
+    // dung lai toan bo bang. Neu nguoi dung dang dat focus tren mot nut
+    // TRONG bang do (vi du dang Tab toi nut "Xoa vinh vien" cua mot dong),
+    // dung 1.5 giay sau phan tu do bi huy va focus bat ve <body>: nguoi
+    // dung ban phim khong bao gio Tab toi noi minh dinh den, va nguoi dung
+    // trinh doc man hinh bi mat ngu canh giua chung. Voi mot bang chua cac
+    // thao tac KHONG HOAN TAC DUOC, day khong chi la phien toai.
+    //
+    // Sua: bo qua lan ve lai nay neu focus dang nam trong chinh bang do.
+    // Du lieu se duoc cap nhat o chu ky ke tiep sau khi nguoi dung roi di —
+    // cham mot nhip la danh doi dung dan so voi viec cuop focus.
+    if (currentView === "quarantine" && !containerHasFocus("#quarantineTable")) tasks.push(renderQuarantine());
+    if (currentView === "rules" && !containerHasFocus("#rulesTable")) tasks.push(renderRules());
+    if (currentView === "downloads" && !containerHasFocus("#downloadsList")) tasks.push(renderDownloads());
+    if (currentView === "scan" && !containerHasFocus("#flaggedList")) tasks.push(renderFlaggedItems());
     await Promise.all(tasks);
   } catch (e) {
     setConnected(false);

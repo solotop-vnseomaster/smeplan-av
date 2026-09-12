@@ -59,8 +59,16 @@ DriverEntry(
     {
         UNICODE_STRING sddl;
         RtlInitUnicodeString(&sddl, L"D:P(A;;GA;;;SY)(A;;GA;;;BA)");
+    // [SUA LOI NGHIEM TRONG] Tham so DeviceCharacteristics (tham so thu 5)
+    // TRUOC DAY la 0 — THIEU FILE_DEVICE_SECURE_OPEN. Khong co co nay, SDDL
+    // o tren CHI duoc ap dung khi mo CHINH device, con moi lan mo mot
+    // "duong dan phu" duoi device (vi du \.\SmePlanAvObGuardat_ky) deu BO QUA
+    // security descriptor cua device — mot tien trinh quyen thuong chi can
+    // them mot dau gach cheo la qua duoc toan bo kiem tra quyen va goi
+    // duoc IOCTL. Comment ben tren tuyen bo lo hong nay da duoc va bang
+    // IoCreateDeviceSecure + SDDL; tuyen bo do KHONG dung neu thieu co nay.
         status = IoCreateDeviceSecure(
-            DriverObject, 0, &deviceName, FILE_DEVICE_UNKNOWN, 0, FALSE,
+            DriverObject, 0, &deviceName, FILE_DEVICE_UNKNOWN, FILE_DEVICE_SECURE_OPEN, FALSE,
             &sddl, NULL, &gObContext.DeviceObject);
     }
     if (!NT_SUCCESS(status)) {
@@ -82,12 +90,16 @@ DriverEntry(
     // "launcher ghi vao chinh tien trinh con no vua tao" (thuong hop le)
     // voi "mot tien trinh bat ky ghi vao mot tien trinh khong lien quan"
     // (dau hieu process hollowing manh hon nhieu).
+    // Vong dem su kien truy cap dang ngo — xem SmePlanAvObLogSuspiciousAccess.
+    KeInitializeSpinLock(&gObContext.EventLock);
+
     status = PsSetCreateProcessNotifyRoutineEx(SmePlanAvObProcessNotify, FALSE);
     if (!NT_SUCCESS(status)) {
         IoDeleteSymbolicLink(&symLinkName);
         IoDeleteDevice(gObContext.DeviceObject);
         return status;
     }
+    gObContext.ProcessNotifyRegistered = TRUE;
 
     // ObRegisterCallbacks tren PsProcessType, chan OB_OPERATION_HANDLE_CREATE
     // (va HANDLE_DUPLICATE — mot tien trinh co the lay handle qua
@@ -109,7 +121,10 @@ DriverEntry(
 
     status = ObRegisterCallbacks(&callbackRegistration, &gObContext.RegistrationHandle);
     if (!NT_SUCCESS(status)) {
+        // Duong nay chi chay khi notify routine DA dang ky thanh cong o tren,
+        // nen go la dung; xoa co de DriverUnload khong go lan thu hai.
         PsSetCreateProcessNotifyRoutineEx(SmePlanAvObProcessNotify, TRUE);
+        gObContext.ProcessNotifyRegistered = FALSE;
         IoDeleteSymbolicLink(&symLinkName);
         IoDeleteDevice(gObContext.DeviceObject);
         return status;
@@ -128,8 +143,37 @@ SmePlanAvObDriverUnload(_In_ PDRIVER_OBJECT DriverObject)
 
     if (gObContext.RegistrationHandle) {
         ObUnRegisterCallbacks(gObContext.RegistrationHandle);
+        gObContext.RegistrationHandle = NULL;
     }
-    PsSetCreateProcessNotifyRoutineEx(SmePlanAvObProcessNotify, TRUE);
+
+    //
+    // [SUA LOI NGHIEM TRONG] TRUOC DAY loi goi nay chay VO DIEU KIEN va gia
+    // tri tra ve bi bo qua hoan toan. Hai van de doc lap:
+    //
+    // 1. Neu DriverEntry that bai TRUOC khi dang ky notify routine, day la
+    //    mot lan GO cai chua bao gio duoc DANG KY.
+    // 2. Neu loi go that bai (tra ve khac STATUS_SUCCESS — vi du
+    //    STATUS_PROCEDURE_NOT_FOUND), driver van unload va anh cua no bi go
+    //    khoi bo nho TRONG KHI entry cua no van con trong bang callback cua
+    //    kernel. Tien trinh KE TIEP duoc tao tren may se goi vao vung nho da
+    //    khong con — bugcheck, va nguyen nhan that su rat kho lan ra vi no
+    //    xay ra sau khi driver da bien mat.
+    //
+    // Sua: chi go khi da thuc su dang ky, va neu go that bai thi TU CHOI
+    // hoan tat unload (giu nguyen trang thai da dang ky) — mot driver khong
+    // go duoc con tot hon mot he thong se bugcheck.
+    //
+    if (gObContext.ProcessNotifyRegistered) {
+        NTSTATUS unregisterStatus =
+            PsSetCreateProcessNotifyRoutineEx(SmePlanAvObProcessNotify, TRUE);
+        if (!NT_SUCCESS(unregisterStatus)) {
+            DbgPrint("SmePlanAvObGuard: KHONG go duoc process-notify routine (0x%08X) - "
+                     "huy unload de tranh bugcheck o tien trinh ke tiep\n", unregisterStatus);
+            return;
+        }
+        gObContext.ProcessNotifyRegistered = FALSE;
+    }
+
     IoDeleteSymbolicLink(&symLinkName);
     if (gObContext.DeviceObject) {
         IoDeleteDevice(gObContext.DeviceObject);
@@ -151,6 +195,7 @@ SmePlanAvObDeviceControl(_In_ PDEVICE_OBJECT DeviceObject, _Inout_ PIRP Irp)
 {
     PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
     NTSTATUS status = STATUS_SUCCESS;
+    ULONG_PTR information = 0;
 
     UNREFERENCED_PARAMETER(DeviceObject);
 
@@ -174,20 +219,57 @@ SmePlanAvObDeviceControl(_In_ PDEVICE_OBJECT DeviceObject, _Inout_ PIRP Irp)
         KeReleaseSpinLock(&gObContext.TableLock, oldIrql);
         break;
     }
-    case IOCTL_SMEPLANAV_OB_READ_SUSPICIOUS_ACCESS:
-        // [HAN CHE MOI TRUONG] Xem ghi chu tuong duong trong
-        // wfp_callout.c SmePlanAvFwDeviceControl — quan ly pending-IRP
-        // day du (mark pending + cancel routine) bi luoc bot trong ban
-        // tham chieu nay.
-        status = STATUS_PENDING;
+    case IOCTL_SMEPLANAV_OB_READ_SUSPICIOUS_ACCESS: {
+        //
+        // [SUA LOI CAO — LOI GIAO THUC IRP] TRUOC DAY nhanh nay dat
+        // status = STATUS_PENDING roi roi thang xuong IoCompleteRequest o
+        // cuoi ham VA return STATUS_PENDING. Do la vi pham giao thuc IRP
+        // nghiem trong: STATUS_PENDING noi voi I/O Manager rang IRP CHUA
+        // hoan tat va driver con giu no — trong khi driver vua hoan tat no
+        // xong. I/O Manager se tiep tuc thao tac tren mot IRP da duoc giai
+        // phong (use-after-free trong kernel). Ngoai ra IoMarkIrpPending
+        // KHONG he duoc goi, dieu bat buoc truoc khi tra STATUS_PENDING.
+        //
+        // Sua: bo hoan toan mo hinh pending-IRP (von chua bao gio duoc
+        // trien khai) va chuyen sang DRAIN dong bo tu vong dem su kien —
+        // service poll dinh ky, moi lan lay het nhung gi dang co. Hoan tat
+        // ngay lap tuc, dung giao thuc, va quan trong hon: canh bao THUC SU
+        // den duoc user-mode (xem SmePlanAvObLogSuspiciousAccess).
+        //
+        ULONG capacity = stack->Parameters.DeviceIoControl.OutputBufferLength
+                       / sizeof(SMEPLANAV_OB_SUSPICIOUS_ACCESS_EVENT);
+        PSMEPLANAV_OB_SUSPICIOUS_ACCESS_EVENT out =
+            (PSMEPLANAV_OB_SUSPICIOUS_ACCESS_EVENT)Irp->AssociatedIrp.SystemBuffer;
+        KIRQL oldIrql;
+        ULONG copied = 0;
+
+        if (capacity == 0 || out == NULL) {
+            status = STATUS_BUFFER_TOO_SMALL;
+            break;
+        }
+
+        KeAcquireSpinLock(&gObContext.EventLock, &oldIrql);
+        while (copied < capacity && gObContext.EventCount > 0) {
+            // Su kien cu nhat = EventHead lui lai EventCount vi tri.
+            ULONG tail = (gObContext.EventHead + SMEPLANAV_OB_MAX_EVENTS - gObContext.EventCount)
+                       % SMEPLANAV_OB_MAX_EVENTS;
+            out[copied] = gObContext.Events[tail];
+            gObContext.EventCount--;
+            copied++;
+        }
+        KeReleaseSpinLock(&gObContext.EventLock, oldIrql);
+
+        information = copied * sizeof(SMEPLANAV_OB_SUSPICIOUS_ACCESS_EVENT);
+        status = STATUS_SUCCESS;
         break;
+    }
     default:
         status = STATUS_INVALID_DEVICE_REQUEST;
         break;
     }
 
     Irp->IoStatus.Status = status;
-    Irp->IoStatus.Information = 0;
+    Irp->IoStatus.Information = information;
     IoCompleteRequest(Irp, IO_NO_INCREMENT);
     return status;
 }
@@ -390,12 +472,40 @@ SmePlanAvObIsWhitelisted(_In_ HANDLE Pid)
 VOID
 SmePlanAvObLogSuspiciousAccess(_In_ HANDLE RequesterPid, _In_ HANDLE TargetPid, _In_ ULONG DesiredAccess)
 {
-    // [HAN CHE MOI TRUONG] Ban day du: tao SMEPLANAV_OB_SUSPICIOUS_ACCESS_EVENT,
-    // hoan tat mot IRP dang cho trong PendingNotifyIrps (neu co) de service
-    // nhan duoc gan nhu ngay lap tuc qua IOCTL_SMEPLANAV_OB_READ_SUSPICIOUS_ACCESS
-    // dang pending — bo qua chi tiet quan ly hang doi IRP trong ban tham
-    // chieu nay (xem ghi chu tai SmePlanAvObDeviceControl).
-    UNREFERENCED_PARAMETER(RequesterPid);
-    UNREFERENCED_PARAMETER(TargetPid);
-    UNREFERENCED_PARAMETER(DesiredAccess);
+    //
+    // [SUA LOI CAO] TRUOC DAY toan bo than ham nay la ba dong
+    // UNREFERENCED_PARAMETER — mot ham RONG. SmePlanAvObPreOperationCallback
+    // van chay du, van ket luan dung "tien trinh khong lien quan dang xin
+    // quyen ghi vao tien trinh khac", roi goi ham nay va KET QUA BIEN MAT.
+    // Khong luu, khong day len user-mode, khong ghi log. Tang phat hien
+    // process-hollowing vi vay khong bao gio tao ra duoc mot canh bao nao,
+    // du no hoat dong dung ve mat logic.
+    //
+    // Sua: ghi su kien vao vong dem tinh trong context (xem ob_callbacks.h)
+    // de service doc ra qua IOCTL_SMEPLANAV_OB_READ_SUSPICIOUS_ACCESS.
+    // Ham nay co the duoc goi o IRQL cao (duong callback cua Object
+    // Manager) nen: spinlock, bo nho tinh, KHONG cap phat, khong I/O.
+    //
+    KIRQL oldIrql;
+    ULONG slot;
+
+    KeAcquireSpinLock(&gObContext.EventLock, &oldIrql);
+
+    slot = gObContext.EventHead;
+    gObContext.Events[slot].RequesterProcessId = RequesterPid;
+    gObContext.Events[slot].TargetProcessId = TargetPid;
+    gObContext.Events[slot].DesiredAccessMask = DesiredAccess;
+    KeQuerySystemTime(&gObContext.Events[slot].TargetCreateTime);
+
+    gObContext.EventHead = (gObContext.EventHead + 1) % SMEPLANAV_OB_MAX_EVENTS;
+    if (gObContext.EventCount < SMEPLANAV_OB_MAX_EVENTS) {
+        gObContext.EventCount++;
+    } else {
+        // Vong dem day: su kien cu nhat vua bi ghi de. Dem lai de service
+        // biet minh da BO LOT bao nhieu canh bao — im lang o day se lap lai
+        // dung loi "phat hien roi lam mat" ma ban sua nay ton tai de va.
+        gObContext.EventDropped++;
+    }
+
+    KeReleaseSpinLock(&gObContext.EventLock, oldIrql);
 }

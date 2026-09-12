@@ -8,6 +8,11 @@
     <UseWPF>true</UseWPF>
     <RootNamespace>Antivirus.Shell</RootNamespace>
     <AssemblyName>AntivirusApp</AssemblyName>
+
+    <!-- Shell doc api-token.txt truc tiep tu dia, ma file do duoc khoa ACL
+         chi cho SYSTEM + Administrators. Chay quyen thuong = Access denied =
+         giao dien trang. Xem giai thich day du trong app.manifest. -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
   <ItemGroup>

@@ -21,11 +21,66 @@ public partial class MainWindow : Window
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "AntivirusApp", "data", "api-token.txt");
 
+    // [SUA LOI CHAN PHAT HANH] Thu muc du lieu cua WebView2.
+    //
+    // TRUOC DAY khong cho nao cau hinh UserDataFolder, nen WebView2 dung mac
+    // dinh cua no: mot thu muc "<duong-dan-exe>.WebView2" NGAY CANH file exe.
+    // Khi chay tu thu muc phat trien thi khong sao. Khi cai that bang MSI,
+    // exe nam o C:\Program Files\SmePlanAv\Shell\ — thu muc ma ngay ca tien
+    // trinh elevated cung KHONG nen ghi vao, va WebView2 tu choi thang:
+    //
+    //   "We couldn't create the data directory
+    //    Microsoft Edge can't read and write to its data directory:
+    //    C:\Program Files\SmePlanAv\Shell\AntivirusApp.exe.WebView2\EBWebView"
+    //
+    // Ket qua: cua so mo len den thui, khong mot pixel giao dien nao. Loi nay
+    // KHONG the lo ra khi chay tu bin/ luc phat trien — no chi xuat hien sau
+    // khi da cai dat that, tuc la o dung noi ma nguoi dung gap dau tien.
+    //
+    // Sua: dat tuong minh vao %LOCALAPPDATA% — thu muc du lieu theo NGUOI
+    // DUNG, luon ghi duoc, va la vi tri Microsoft khuyen dung cho
+    // UserDataFolder cua ung dung cai vao Program Files.
+    private static readonly string WebViewUserDataFolder = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "SmePlanAv", "WebView2");
+
     public MainWindow()
     {
         InitializeComponent();
-        Loaded += async (_, _) => { TryEnableDarkTitleBar(); await NavigateWithTokenAsync(); };
+        Loaded += async (_, _) => { TryEnableDarkTitleBar(); await InitializeBrowserAsync(); };
         Browser.NavigationCompleted += Browser_NavigationCompleted;
+    }
+
+    // Phai tao CoreWebView2Environment voi UserDataFolder rieng TRUOC khi
+    // dung Browser.Source — dat Source trong khi CoreWebView2 chua khoi tao
+    // se khien no tu khoi tao bang moi truong MAC DINH (canh exe), dung cai
+    // ta muon tranh.
+    private async Task InitializeBrowserAsync()
+    {
+        try
+        {
+            Directory.CreateDirectory(WebViewUserDataFolder);
+            var env = await CoreWebView2Environment.CreateAsync(
+                browserExecutableFolder: null,
+                userDataFolder: WebViewUserDataFolder);
+            await Browser.EnsureCoreWebView2Async(env);
+        }
+        catch (Exception ex)
+        {
+            // Khong khoi tao duoc WebView2 thi giao dien khong the hien thi.
+            // Noi ro ly do thay vi de lai mot cua so den khong giai thich gi —
+            // day dung la kieu that bai im lang ma ban review chi ra nhieu lan.
+            MessageBox.Show(
+                "Khong khoi tao duoc WebView2 (thanh phan hien thi giao dien).\n\n" +
+                $"Thu muc du lieu: {WebViewUserDataFolder}\n" +
+                $"Chi tiet: {ex.GetType().Name}: {ex.Message}\n\n" +
+                "Kiem tra da cai WebView2 Runtime chua (Microsoft Edge WebView2 Runtime).",
+                "SmePlanAv — loi khoi tao giao dien",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        await NavigateWithTokenAsync();
     }
 
     // [SUA LOI NGHIEM TRONG] Service gio yeu cau token xac thuc cho moi
@@ -66,6 +121,9 @@ public partial class MainWindow : Window
     private async void RetryButton_Click(object sender, RoutedEventArgs e)
     {
         RetryOverlay.Visibility = Visibility.Collapsed;
+        // Neu lan khoi tao dau that bai, CoreWebView2 van chua san sang —
+        // di lai duong khoi tao day du thay vi chi doi dieu huong.
+        if (Browser.CoreWebView2 is null) { await InitializeBrowserAsync(); return; }
         await NavigateWithTokenAsync();
     }
 

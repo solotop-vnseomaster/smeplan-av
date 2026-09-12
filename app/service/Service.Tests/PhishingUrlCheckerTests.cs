@@ -69,6 +69,48 @@ public class PhishingUrlCheckerTests : IDisposable
         Assert.False(result.Malicious);
     }
 
+    // [test-coverage][KIEM THU HOI QUY] Fix bao mat da ghi trong comment cua
+    // CheckUrl ("evil.com." voi dau cham cuoi") truoc day KHONG co test nao —
+    // DNS coi "evil.com." va "evil.com" la CUNG mot ten (dau cham goc FQDN),
+    // trinh duyet van mo dung site bi chan neu bypass check nay thanh cong.
+    [Fact]
+    public void DomainWithTrailingDot_StillMatchesBlocklist()
+    {
+        _store.ReplaceAll(new[] { "evil-login.com" }, Array.Empty<string>());
+
+        var result = _checker.CheckUrl("https://evil-login.com./steal-password");
+
+        Assert.True(result.Malicious);
+        Assert.Equal("domain", result.MatchedOn);
+        Assert.Equal("evil-login.com", result.MatchedValue);
+    }
+
+    [Fact]
+    public void SubdomainWithTrailingDot_StillMatchesParentDomain()
+    {
+        _store.ReplaceAll(new[] { "evil.com" }, Array.Empty<string>());
+
+        var result = _checker.CheckUrl("https://login.secure.evil.com./");
+
+        Assert.True(result.Malicious);
+        Assert.Equal("evil.com", result.MatchedValue);
+    }
+
+    // [test-coverage] Xac nhan uu tien khop domain CU THE NHAT (khong phai
+    // domain cha) khi ca hai deu nam trong blocklist — hanh vi cua
+    // FindMostSpecificListedDomain phai giu dung thu tu uu tien cu nhu vong
+    // lap IsDomainListed tuan tu truoc day, du gio chi con 1 truy van SQL.
+    [Fact]
+    public void MultipleListedAncestors_ReturnsMostSpecificMatch()
+    {
+        _store.ReplaceAll(new[] { "evil.com", "login.evil.com" }, Array.Empty<string>());
+
+        var result = _checker.CheckUrl("https://login.evil.com/");
+
+        Assert.True(result.Malicious);
+        Assert.Equal("login.evil.com", result.MatchedValue);
+    }
+
     [Fact]
     public void ReplaceAll_ClearsPreviousEntries()
     {

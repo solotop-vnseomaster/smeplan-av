@@ -137,6 +137,146 @@ public class ProcessTrustEngineTests : IDisposable
         Assert.False(secondDecision.Allowed);
     }
 
+    // [test-coverage] Chi co RuleAllow duoc test truoc day — neu logic dao
+    // Allow/Block bi loi (vi du gan nham ruleByHash.Action == RuleAction.Allow
+    // thanh != ), khong test nao bat duoc. Doi xung voi RuleAllowByHash o tren.
+    [Fact]
+    public async Task RuleBlockByHash_TakesPrecedence_SkipsUserPrompt()
+    {
+        var engine = new ProcessTrustEngine(_rules, _broker, _audit, NullLogger<ProcessTrustEngine>.Instance);
+        var hash = System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(_exePath));
+        var hashHex = Convert.ToHexString(hash).ToLowerInvariant();
+
+        _rules.Add(new AppRule
+        {
+            Sha256Hash = hashHex, FilePath = _exePath, Action = RuleAction.Block,
+            Scope = RuleScope.Hash, CreatedAt = 1, CreatedBy = RuleCreatedBy.User,
+        });
+
+        var decision = await engine.EvaluateAsync(_exePath, 1234, CancellationToken.None);
+
+        Assert.Equal(ProcessTrustState.RuleBlock, decision.State);
+        Assert.False(decision.Allowed);
+    }
+
+    // [test-coverage] FindByPublisher / RuleAllow-Block theo publisher chua
+    // tung duoc test — dung mot ban sao mot file he thong CO CHU KY
+    // AUTHENTICODE NHUNG VAO (khong phai chi catalog-signed — xem
+    // AuthenticodeVerifier.Verify: publisher/thumbprint doc qua
+    // X509Certificate.CreateFromSignedFile, CHI hoat dong voi chu ky nhung
+    // vao file, notepad.exe/cmd.exe tren Windows hien dai la catalog-signed
+    // nen KHONG dung duoc cho muc dich nay) dat NGOAI cac thu muc
+    // trusted-by-default (Windows/Program Files) de bat buoc engine roi
+    // xuong nhanh kiem tra rule-theo-publisher thay vi trusted-by-default
+    // hay rule-theo-hash. svchost.exe/explorer.exe on dinh la nhung file
+    // nhung vao tren moi ban Windows hien dai.
+    private static readonly string[] EmbeddedSignedCandidates =
+    {
+        @"C:\Windows\System32\svchost.exe",
+        @"C:\Windows\explorer.exe",
+        @"C:\Program Files\Windows Defender\MpCmdRun.exe",
+    };
+
+    private static string? CopySignedSystemBinaryOutsideTrustedDir()
+    {
+        foreach (var source in EmbeddedSignedCandidates)
+        {
+            if (!File.Exists(source)) continue;
+            try
+            {
+#pragma warning disable SYSLIB0057
+                using var probe = System.Security.Cryptography.X509Certificates.X509Certificate.CreateFromSignedFile(source);
+#pragma warning restore SYSLIB0057
+            }
+            catch
+            {
+                continue; // khong co chu ky nhung vao (chi catalog) — thu file khac
+            }
+
+            var destDir = Directory.CreateTempSubdirectory("avtest_signed_copy_").FullName;
+            var dest = Path.Combine(destDir, Path.GetFileName(source));
+            File.Copy(source, dest);
+            return dest;
+        }
+        return null;
+    }
+
+    [Fact]
+    public async Task RuleBlockByPublisher_AppliesForSignedFileOutsideTrustedDirectory_WhenNoHashRuleExists()
+    {
+        var signedPath = CopySignedSystemBinaryOutsideTrustedDir();
+        if (signedPath is null) return; // khong tim thay file nao co chu ky nhung vao tren may nay — bo qua
+
+        try
+        {
+            // Chay lan dau KHONG co rule nao de lay PublisherThumbprint THAT
+            // tu chu ky Authenticode cua ban sao file he thong (van hop le
+            // du duong dan khong con nam trong thu muc trusted).
+            var probeEngine = new ProcessTrustEngine(_rules, _broker, _audit,
+                NullLogger<ProcessTrustEngine>.Instance, userDecisionTimeout: TimeSpan.FromMilliseconds(200));
+            var probeDecision = await probeEngine.EvaluateAsync(signedPath, 1111, CancellationToken.None);
+            Assert.Equal(ProcessTrustState.DeniedByTimeout, probeDecision.State);
+            Assert.False(string.IsNullOrEmpty(probeDecision.PublisherThumbprint));
+
+            _rules.Add(new AppRule
+            {
+                Sha256Hash = "",
+                PublisherThumbprint = probeDecision.PublisherThumbprint,
+                FilePath = signedPath,
+                Action = RuleAction.Block,
+                Scope = RuleScope.Publisher,
+                CreatedAt = 1,
+                CreatedBy = RuleCreatedBy.User,
+            });
+
+            var engine = new ProcessTrustEngine(_rules, _broker, _audit, NullLogger<ProcessTrustEngine>.Instance);
+            var decision = await engine.EvaluateAsync(signedPath, 2222, CancellationToken.None);
+
+            Assert.Equal(ProcessTrustState.RuleBlock, decision.State);
+            Assert.False(decision.Allowed);
+        }
+        finally
+        {
+            try { Directory.Delete(Path.GetDirectoryName(signedPath)!, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public async Task RuleAllowByPublisher_AppliesForSignedFileOutsideTrustedDirectory_WhenNoHashRuleExists()
+    {
+        var signedPath = CopySignedSystemBinaryOutsideTrustedDir();
+        if (signedPath is null) return; // khong tim thay file nao co chu ky nhung vao tren may nay — bo qua
+
+        try
+        {
+            var probeEngine = new ProcessTrustEngine(_rules, _broker, _audit,
+                NullLogger<ProcessTrustEngine>.Instance, userDecisionTimeout: TimeSpan.FromMilliseconds(200));
+            var probeDecision = await probeEngine.EvaluateAsync(signedPath, 1111, CancellationToken.None);
+            Assert.False(string.IsNullOrEmpty(probeDecision.PublisherThumbprint));
+
+            _rules.Add(new AppRule
+            {
+                Sha256Hash = "",
+                PublisherThumbprint = probeDecision.PublisherThumbprint,
+                FilePath = signedPath,
+                Action = RuleAction.Allow,
+                Scope = RuleScope.Publisher,
+                CreatedAt = 1,
+                CreatedBy = RuleCreatedBy.User,
+            });
+
+            var engine = new ProcessTrustEngine(_rules, _broker, _audit, NullLogger<ProcessTrustEngine>.Instance);
+            var decision = await engine.EvaluateAsync(signedPath, 2222, CancellationToken.None);
+
+            Assert.Equal(ProcessTrustState.RuleAllow, decision.State);
+            Assert.True(decision.Allowed);
+        }
+        finally
+        {
+            try { Directory.Delete(Path.GetDirectoryName(signedPath)!, recursive: true); } catch { }
+        }
+    }
+
     public void Dispose()
     {
         try { File.Delete(_dbPath); } catch { }

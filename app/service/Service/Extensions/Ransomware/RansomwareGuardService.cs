@@ -60,12 +60,34 @@ public sealed class RansomwareGuardService : BackgroundService
     private readonly List<RansomwareAlert> _recentAlerts = new();
     private readonly object _alertsLock = new();
 
-    public static readonly string[] DefaultProtectedFolders =
-    {
-        Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-        Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
-        Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
-    };
+    // [SUA LOI NGHIEM TRONG] TRUOC DAY danh sach nay dung
+    // Environment.GetFolderPath(MyDocuments/MyPictures/DesktopDirectory).
+    // Service chay duoi LocalSystem, nen ba duong dan do tro toi
+    // C:\Windows\System32\config\systemprofile\{Documents,Pictures,
+    // Desktop} — thu muc cua TAI KHOAN SYSTEM, khong phai cua nguoi dung.
+    // Ket qua: khong mot watcher nao dat len du lieu that cua nguoi dung
+    // => toan bo chong ransomware vo hieu 100%, trong khi log van ghi
+    // "dang giam sat" va UI van bao dang bao ve. Sua: liet ke profile
+    // nguoi dung THAT qua UserProfiles (xem Common/UserProfiles.cs).
+    //
+    // Danh sach nay khong con la hang so tinh: no phai duoc doc luc chay
+    // (profile co the duoc tao/xoa) va co the RONG tren may khong co
+    // profile nguoi dung nao — truong hop do phai duoc bao ra ro rang, xem
+    // StartWatchers.
+    public static IReadOnlyList<string> GetProtectedFolders() =>
+        Antivirus.Service.Common.UserProfiles.GetProtectedDocumentFolders();
+
+    // [SUA LOI CAO — DAY DIA, BAN SUA THU HAI]
+    // Ban sua dau tien dat han muc dung O DAY, va CHI kiem tra no trong vong
+    // lap baseline snapshot. Duong snapshot THEO SU KIEN (EvaluateWindow ->
+    // toi 50 file moi 20 giay, chay mai mai) khong di qua kiem tra do. Do
+    // luong tren may that sau 19 phut chay: 6016 file / 682MB va van tang —
+    // tuc la han muc dat sai cho thi khong phai la han muc.
+    //
+    // Han muc gio nam trong VersionStore.SnapshotFile (xem
+    // VersionStore.MaxTotalBytes) — diem nghen DUY NHAT ma moi call site
+    // deu phai di qua. Khong con hang so han muc rieng o day nua: hai con
+    // so o hai noi la cach chac chan nhat de chung lech nhau.
 
     public RansomwareGuardService(VersionStore versionStore, EventBus eventBus, ILogger<RansomwareGuardService> logger)
     {
@@ -81,8 +103,20 @@ public sealed class RansomwareGuardService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        BaselineSnapshotExistingFiles();
+        // [SUA LOI] StartWatchers TRUOC, baseline snapshot SAU va tren
+        // thread nen. TRUOC DAY BaselineSnapshotExistingFiles() chay dong bo
+        // ngay tai day, TRUOC await dau tien — voi thu muc nguoi dung that
+        // (sau khi sua GetProtectedFolders) day la toi 500 file * 20MB I/O
+        // dong bo, chan toan bo qua trinh khoi dong host (moi HostedService
+        // dang sau trong hang doi khong duoc start, service bi SCM coi la
+        // treo). Dat watcher truoc con dam bao khong bo lot su kien ghi xay
+        // ra trong luc dang snapshot.
         StartWatchers();
+        _ = Task.Run(() =>
+        {
+            try { BaselineSnapshotExistingFiles(); }
+            catch (Exception ex) { _logger.LogError(ex, "Ransomware guard: baseline snapshot that bai"); }
+        }, stoppingToken);
 
         try
         {
@@ -118,13 +152,18 @@ public sealed class RansomwareGuardService : BackgroundService
         // phai loi — nhung can neu ro de khong bi hieu nham la "moi file
         // trong thu muc bao ve deu phuc hoi duoc".
         const int maxFilesToSnapshot = 500;
-        const long maxFileSizeBytes = 20L * 1024 * 1024; // 20MB
+        // [SUA LOI — MOT NGUON SU THAT] Han muc kich thuoc tung file truoc
+        // day la mot hang so CUC BO o day, nen duong snapshot theo su kien
+        // (EvaluateWindow) khong he biet toi no. Han muc da duoc chuyen vao
+        // VersionStore.SnapshotFile — diem nghen duy nhat — giong nhu han
+        // muc tong dung luong. Doc lai tu do de hai noi khong the lech nhau.
+        long maxFileSizeBytes = _versionStore.MaxFileBytes;
         int count = 0;
         // Dung CHUNG mot ket noi SQLite cho toan bo vong lap (co the qua
         // hang tram file) thay vi moi file tu mo/dong ket noi rieng — xem
         // ghi chu tai VersionStore.OpenBatch.
         using var batch = _versionStore.OpenBatch();
-        foreach (var folder in DefaultProtectedFolders)
+        foreach (var folder in GetProtectedFolders())
         {
             if (!Directory.Exists(folder)) continue;
 
@@ -146,6 +185,9 @@ public sealed class RansomwareGuardService : BackgroundService
             foreach (var file in files)
             {
                 if (count >= maxFilesToSnapshot) return;
+                // Han muc tong dung luong do CHINH VersionStore.SnapshotFile
+                // ap dat (xem ghi chu tren) — khong kiem tra lai o day de
+                // khong sinh ra mot ban sao chinh sach thu hai co the lech.
                 if (batch.GetLatestVersion(file) is not null) continue; // da co roi
                 try { if (new FileInfo(file).Length > maxFileSizeBytes) continue; } catch { continue; }
                 batch.SnapshotFile(file, triggeredByPid: 0);
@@ -157,7 +199,18 @@ public sealed class RansomwareGuardService : BackgroundService
 
     private void StartWatchers()
     {
-        foreach (var folder in DefaultProtectedFolders)
+        var folders = GetProtectedFolders();
+        // Danh sach rong nghia la KHONG CO GI dang duoc bao ve. Truoc day
+        // truong hop nay xay ra tren MOI may (do loi systemprofile) va khong
+        // he co canh bao nao — chinh la trang thai "bao cao dang bao ve
+        // trong khi khong bao ve gi" ma bao cao review chi ra. Bao dong to.
+        if (folders.Count == 0)
+        {
+            _logger.LogCritical(
+                "Ransomware guard: KHONG tim thay thu muc nguoi dung nao de bao ve — chong ransomware KHONG hoat dong");
+        }
+
+        foreach (var folder in folders)
         {
             if (!Directory.Exists(folder)) continue;
             try
@@ -168,7 +221,25 @@ public sealed class RansomwareGuardService : BackgroundService
                     NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName,
                 };
                 watcher.Changed += (_, e) => OnFileEvent(e.FullPath);
-                watcher.Renamed += (_, e) => OnFileEvent(e.FullPath);
+                // [SUA LOI NGHIEM TRONG] TRUOC DAY su kien Renamed cung chi
+                // dua e.FullPath (duong dan MOI) vao hang doi, va e.OldFullPath
+                // bi vut bo hoan toan. Nhung tin hieu "hang loat file bi doi
+                // duoi" — mot trong ba dieu kien kich hoat rollback — CHINH LA
+                // viec file da bi doi ten: version store chi co snapshot theo
+                // duong dan CU (bao gio cung la duong dan da ton tai truoc do
+                // du lau de duoc snapshot), trong khi rollback lai tra cuu
+                // theo duong dan MOI (vi du "anh.jpg.locked") va khong bao gio
+                // tim thay gi. Ca hai nhanh rollback vi the deu khong cuu duoc
+                // file nao — dung o kich ban ma tinh nang nay ton tai de xu ly.
+                //
+                // Sua: dua CA duong dan cu vao hang doi. Duong dan cu la cai
+                // co snapshot de khoi phuc; duong dan moi van duoc giu de dem
+                // tin hieu "burst duoi file".
+                watcher.Renamed += (_, e) =>
+                {
+                    OnFileEvent(e.OldFullPath);
+                    OnFileEvent(e.FullPath);
+                };
                 watcher.Created += (_, e) => OnFileEvent(e.FullPath);
                 watcher.EnableRaisingEvents = true;
                 _watchers.Add(watcher);
@@ -183,6 +254,10 @@ public sealed class RansomwareGuardService : BackgroundService
 
     private void OnFileEvent(string path)
     {
+        if (string.IsNullOrEmpty(path)) return;
+        // Luu y: voi su kien Renamed, duong dan CU khong con ton tai tren dia
+        // nen Directory.Exists tra false — dung nhu mong doi, no van duoc dua
+        // vao hang doi de rollback co the tra cuu snapshot theo no.
         if (Directory.Exists(path)) return; // bo qua su kien thu muc
         _pendingEvents.Enqueue((path, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
     }
@@ -204,6 +279,9 @@ public sealed class RansomwareGuardService : BackgroundService
         // ban sach moi nhat" cho chinh nhung file nay khi ransomware CHUA
         // duoc xac nhan du 3 tin hieu (xem ghi chu o nhanh else ben duoi).
         int entropyJumps = 0;
+        // [SUA LOI CAO] Dem so file KHONG doc duoc trong cua so nay — xem ghi
+        // chu tai khoi catch ben duoi.
+        int unreadableDuringBurst = 0;
         var suspiciousPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         // Dung CHUNG mot ket noi SQLite cho ca cua so nay (kiem tra entropy,
         // rollback, snapshot ben duoi co the qua nhieu file) thay vi moi
@@ -224,9 +302,44 @@ public sealed class RansomwareGuardService : BackgroundService
                     suspiciousPaths.Add(path);
                 }
             }
-            catch { /* file khoa/da bi xoa giua luc quet — bo qua */ }
+            catch (Exception ex)
+            {
+                // [SUA LOI CAO] TRUOC DAY day la `catch { }` rong voi comment
+                // "file khoa/da bi xoa giua luc quet — bo qua". Nhung viec mo
+                // file that bai o day khong phai nhieu ngau nhien: ransomware
+                // mo dung cac file no dang ma hoa voi dwShareMode = 0 (doc
+                // quyen), nen ComputeEntropySample nem tren CHINH nhung file
+                // dang bi tan cong. Ket qua: entropyJumps giu nguyen 0,
+                // entropySignal = false, ransomwareConfirmed = false, va
+                // rollback KHONG BAO GIO chay — mot cong tac tat phat hien ma
+                // ke tan cong bat duoc bang co doc quyen file, im lang tuyet
+                // doi.
+                //
+                // Sua: dem lai. Khong doc duoc thi la "chua biet", KHONG phai
+                // "khong co dau hieu".
+                unreadableDuringBurst++;
+                _logger.LogDebug(ex, "Khong doc duoc de tinh entropy: {Path}", path);
+            }
         }
-        bool entropySignal = entropyJumps >= Math.Max(3, distinctPaths.Count / 3);
+
+        int entropyThreshold = Math.Max(3, distinctPaths.Count / 3);
+        bool entropyJumpSignal = entropyJumps >= entropyThreshold;
+
+        // Hang loat file tai lieu cua nguoi dung bi giu doc quyen dong thoi,
+        // ngay giua mot dot ghi lon, la mot bat thuong theo dung nghia —
+        // khong phai ly do de im lang. Coi day la mot cach khac de tin hieu
+        // entropy duoc kich hoat, nhung log RIENG mot dong de con truy nguoc
+        // duoc vi sao rollback chay.
+        bool lockedBurstSignal = unreadableDuringBurst >= entropyThreshold;
+        if (lockedBurstSignal && !entropyJumpSignal)
+        {
+            _logger.LogWarning(
+                "Ransomware guard: {Count}/{Total} file trong cua so nay KHONG mo duoc de tinh entropy " +
+                "(nghi bi giu doc quyen). Coi day la tin hieu entropy thay vi bo qua.",
+                unreadableDuringBurst, distinctPaths.Count);
+        }
+
+        bool entropySignal = entropyJumpSignal || lockedBurstSignal;
 
         // Tin hieu 3: doi hang loat sang cung mot duoi la.
         var extCounts = distinctPaths

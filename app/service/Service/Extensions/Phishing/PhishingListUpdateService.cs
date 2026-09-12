@@ -27,14 +27,32 @@ public sealed class PhishingListUpdateService : BackgroundService
     private readonly PhishingListStore _store;
     private readonly AuditLogger _audit;
     private readonly ILogger<PhishingListUpdateService> _logger;
-    private readonly X509Certificate2 _trustedCert;
+    // [SUA LOI CHAN PHAT HANH — A3] Xem ghi chu cung noi dung o
+    // UpdateClientService: null = chua cau hinh neo tin cay => kenh cap
+    // nhat danh sach phishing tat han, goi nao cung bi tu choi (fail-closed),
+    // phan con lai cua service van chay.
+    private readonly X509Certificate2? _trustedCert;
     private readonly TimeSpan _interval;
     private readonly string _versionStatePath;
 
     public int CurrentVersion { get; private set; }
 
+    // Phoi ra /api/phishing/stats de trang thai suy giam nhin thay duoc.
+    public bool SigningTrustConfigured => _trustedCert is not null;
+
+    // Cua DUY NHAT di toi UpdatePackageVerifier trong class nay.
+    private bool TryVerifyPackage(byte[] signedPackage, out byte[] payload)
+    {
+        if (_trustedCert is null)
+        {
+            payload = Array.Empty<byte>();
+            return false;
+        }
+        return UpdatePackageVerifier.TryVerifyAndExtract(signedPackage, _trustedCert, out payload);
+    }
+
     public PhishingListUpdateService(IUpdatePackageSource source, PhishingListStore store, AuditLogger audit,
-        ILogger<PhishingListUpdateService> logger, X509Certificate2 trustedCert, TimeSpan? interval = null,
+        ILogger<PhishingListUpdateService> logger, X509Certificate2? trustedCert, TimeSpan? interval = null,
         string? versionStatePath = null)
     {
         _source = source;
@@ -49,6 +67,17 @@ public sealed class PhishingListUpdateService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (_trustedCert is null)
+        {
+            _logger.LogWarning(
+                "Kenh cap nhat danh sach phishing DA TAT vi thieu cau hinh UpdateSigning:CertPath / " +
+                "UpdateSigning:CertPasswordEnvVar — danh sach hien co van duoc dung de kiem tra URL, " +
+                "nhung se KHONG duoc cap nhat tu dong.");
+            _audit.Log("phishing-update",
+                "Kenh cap nhat danh sach phishing DA TAT: thieu certificate ky goi cap nhat (fail-closed)");
+            return;
+        }
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try { await CheckAndApplyAsync(stoppingToken); }
@@ -75,7 +104,7 @@ public sealed class PhishingListUpdateService : BackgroundService
             return false;
         }
 
-        if (!UpdatePackageVerifier.TryVerifyAndExtract(pkg, _trustedCert, out var payload))
+        if (!TryVerifyPackage(pkg, out var payload))
         {
             _audit.Log("phishing-update", $"ERR: goi {pkgName} KHONG hop le chu ky so — tu choi ap dung");
             _logger.LogWarning("Goi danh sach phishing {Pkg} khong verify duoc chu ky, bi tu choi", pkgName);
@@ -83,6 +112,27 @@ public sealed class PhishingListUpdateService : BackgroundService
         }
 
         var (domains, ips) = ParsePayload(payload);
+
+        // [SUA LOI NGHIEM TRONG] ReplaceAll XOA SACH danh sach cu roi ghi
+        // danh sach moi. TRUOC DAY khong co guard nao: mot goi CO CHU KY
+        // HOP LE nhung sai dinh dang (payload rong, sai ky tu phan cach,
+        // encoding khac) parse ra 0 muc -> toan bo blacklist bi xoa sach,
+        // SaveCurrentVersion ghi nhan da len phien ban moi nen KHONG BAO GIO
+        // tai lai nua, va audit ghi "Da cap nhat... 0 domain" nhu mot thanh
+        // cong. Chong phishing chet vinh vien trong im lang.
+        //
+        // Fail-closed: mot ban cap nhat lam RONG danh sach la ket qua vo ly
+        // trong moi tinh huong hop le — tu choi ap dung va GIU danh sach cu.
+        if (domains.Count == 0 && ips.Count == 0)
+        {
+            _audit.Log("phishing-update",
+                $"ERR: goi {pkgName} parse ra 0 domain va 0 IP — TU CHOI ap dung de khong xoa sach danh sach hien co");
+            _logger.LogError(
+                "Goi danh sach phishing {Pkg} co chu ky hop le nhung khong chua muc nao — giu nguyen danh sach cu ({Count} muc)",
+                pkgName, _store.Count());
+            return false;
+        }
+
         _store.ReplaceAll(domains, ips);
         SaveCurrentVersion(latest.LatestVersion);
         _audit.Log("phishing-update", $"Da cap nhat danh sach phishing len v{latest.LatestVersion}: {domains.Count} domain, {ips.Count} IP");

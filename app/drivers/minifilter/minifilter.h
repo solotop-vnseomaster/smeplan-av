@@ -83,6 +83,11 @@ typedef struct _MINIFILTER_STREAM_CONTEXT {
 
 #define MINIFILTER_STREAM_CONTEXT_TAG 'CsAS' // "SAsC" (SmePlanAv Stream Context)
 
+// [SUA LOI NGHIEM TRONG] Tag cho bo nho non-paged dung de CHUP ban sao
+// kernel cua thong diep push tu user-mode truoc khi validate/copy — xem
+// SmePlanAvMfMessageNotifyCallback trong minifilter.c.
+#define MINIFILTER_POOL_TAG 'gsAS' // "SAsg" (SmePlanAv message)
+
 extern CONST FLT_CONTEXT_REGISTRATION ContextRegistration[];
 
 // --- Thong diep giua driver <-> service qua FltCreateCommunicationPort ---
@@ -192,3 +197,10 @@ FLT_PREOP_CALLBACK_STATUS SmePlanAvMfPreSetInformationCallback(
     _Inout_ PFLT_CALLBACK_DATA Data,
     _In_ PCFLT_RELATED_OBJECTS FltObjects,
     _Flt_CompletionContext_Outptr_ PVOID* CompletionContext);
+
+// [SUA LOI NGHIEM TRONG — HONG MAY] Xem minifilter.c: whitelist tien trinh
+// he thong toi quan trong, can thiet de driver BOOT_START nay khong khoa
+// chet may khi service user-mode chua ket noi hoac khong tra loi kip.
+BOOLEAN SmePlanAvMfContainsSubstring(_In_ PCUNICODE_STRING Haystack, _In_ PCUNICODE_STRING Needle);
+
+BOOLEAN SmePlanAvMfIsCriticalSystemProcess(_In_ PCUNICODE_STRING ImageFileName);

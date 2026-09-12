@@ -167,6 +167,22 @@ public sealed class QuarantineManager
         // file moi do ma khong canh bao gi — mat du lieu nguoi dung. Sua:
         // that bai an toan (khong ghi de, tra ve false + log ro rang) neu
         // vi tri goc DA CO file khac, thay vi ghi de trong im lang.
+        // [SUA LOI NGHIEM TRONG] Kiem tra duong dan dich TRUOC moi thao tac
+        // he thong file khac. Restore() ghi bang quyen SYSTEM vao
+        // record.OriginalPath — duong dan cua mot file do nguoi dung (co the
+        // la ke tan cong) tao ra va da bi cach ly. Guard File.Exists ben duoi
+        // chi chan GHI DE, khong chan viec PLANT mot file MOI qua mot thu muc
+        // cha da bi bien thanh junction sau khi quarantine. Xem
+        // PathUtil.IsSafeRestoreTarget.
+        if (!Antivirus.Service.Common.PathUtil.IsSafeRestoreTarget(record.OriginalPath))
+        {
+            _logger.LogError(
+                "Khong the khoi phuc {Id}: duong dan goc {Path} khong con la duong dan cuc bo an toan (co reparse point/junction xen vao hoac tro ra ngoai o dia) — tu choi ghi bang quyen SYSTEM",
+                quarantineId, record.OriginalPath);
+            _audit.Log("quarantine", $"ERR: tu choi khoi phuc {quarantineId} — duong dan goc bi doi huong: {record.OriginalPath}", new { quarantineId });
+            return false;
+        }
+
         if (File.Exists(record.OriginalPath))
         {
             _logger.LogError(
@@ -179,9 +195,32 @@ public sealed class QuarantineManager
         var decrypted = XorTransform(encrypted);
         Directory.CreateDirectory(Path.GetDirectoryName(record.OriginalPath)!);
         File.WriteAllBytes(record.OriginalPath, decrypted);
-        File.Delete(quarantinedPath);
 
+        // [SUA LOI NGHIEM TRONG — THU TU] TRUOC DAY thu tu la: ghi file goc ->
+        // XOA .qtn -> cap nhat DB. Neu tien trinh chet giua hai buoc cuoi
+        // (mat dien, service bi kill, may reboot), trang thai con lai la
+        // truong hop TE NHAT co the: file DOC da song lai va chay duoc o vi
+        // tri goc, ban sao .qtn da bien mat, con DB van ghi status =
+        // Quarantined. Tu do tro di MOI lan Restore deu that bai o guard
+        // "khong tim thay file quarantine tren dia", khong co duong phuc hoi,
+        // va khong mot dong audit nao ghi lai rang chuyen do da xay ra.
+        //
+        // Sua: cap nhat DB (dong ghi ben) TRUOC khi xoa .qtn. Neu chet giua
+        // chung, cai con lai la mot file .qtn mo coi — ton vai chuc KB va
+        // KHONG gay hai — thay vi mot ban ghi DB noi doi. Tinh trang mo coi
+        // nay la lanh tinh nen chi can log, khong can rollback.
         _store.UpdateStatus(quarantineId, QuarantineStatus.Restored);
+        try
+        {
+            File.Delete(quarantinedPath);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Da khoi phuc {Id} va cap nhat DB, nhung khong xoa duoc ban sao .qtn {Path} — " +
+                "file mo coi nay vo hai, co the xoa thu cong", quarantineId, quarantinedPath);
+        }
+
         _audit.Log("quarantine", $"Da khoi phuc file tu quarantine ve: {record.OriginalPath}", new { quarantineId });
         return true;
     }
@@ -219,6 +258,35 @@ public sealed class QuarantineManager
 
     private void MoveIntoQuarantine(string originalPath, string quarantineId)
     {
+        // [SUA LOI NGHIEM TRONG — GUARD DUNG, TRUOC DAY AP THIEU DUONG]
+        // PathUtil.IsSafeRestoreTarget da duoc viet chinh xac va duoc goi o
+        // Restore() (duong DOC ra khoi quarantine), nhung KHONG he duoc goi
+        // o duong DI VAO — chinh la duong nguy hiem hon, vi no ket thuc bang
+        // File.Delete.
+        //
+        // Kich ban khai thac: nguoi dung thuong tao mot file trong thu muc
+        // cua ho, cho AV gan co Malicious (vi du tha EICAR), roi TRUOC khi
+        // quarantine chay xong thi thay duong dan do bang mot junction/
+        // symlink tro toi dich dac quyen. Tien trinh SYSTEM sau do
+        // File.ReadAllBytes (doc noi dung dich) roi File.Delete (xoa dich).
+        // Ket qua la XOA FILE TUY Y bang quyen SYSTEM — va con lam ro ri noi
+        // dung file dac quyen do vao kho quarantine.
+        //
+        // Cung mot bat bien nhu duong restore, nen dung chung ham kiem tra:
+        // duong dan phai la o dia cuc bo, khong thanh phan nao la reparse
+        // point, va duong di THAT SU trung khop duong di lexical.
+        if (!Antivirus.Service.Common.PathUtil.IsSafeRestoreTarget(originalPath))
+        {
+            _audit.Log("quarantine",
+                $"TU CHOI cach ly {originalPath}: duong dan khong an toan (UNC, reparse point, " +
+                "hoac duong di that khac duong di khai bao) — nghi bi thay bang junction de ep " +
+                "tien trinh SYSTEM xoa file khac");
+            _logger.LogWarning(
+                "TU CHOI cach ly {Path}: duong dan khong vuot qua kiem tra IsSafeRestoreTarget", originalPath);
+            throw new UnauthorizedAccessException(
+                $"Duong dan cach ly khong an toan (reparse point hoac khong phai o dia cuc bo): {originalPath}");
+        }
+
         // BIZ-08: doi ten thanh dinh danh khong mang phan mo rong goc (GUID)
         // + ma hoa noi dung truoc khi di chuyen.
         var destPath = Path.Combine(_quarantineDir, quarantineId + ".qtn");

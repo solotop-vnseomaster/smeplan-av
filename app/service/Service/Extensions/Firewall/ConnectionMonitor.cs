@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using Antivirus.Service.Audit;
 
 namespace Antivirus.Service.Extensions.Firewall;
 
@@ -34,17 +35,49 @@ public sealed class ConnectionMonitor : BackgroundService
     private const int MaxSamplesTracked = 30;
     private const double LowVariationThreshold = 0.15; // he so bien thien (stddev/mean) thap = deu dan bat thuong
 
+    // [SUA LOI NGHIEM TRONG] FirewallRuleStore.FindBestMatch TRUOC DAY khong
+    // co MOT call site san xuat nao — chi cac test goi no. Nguoi dung tao
+    // rule "Block", thay no trong danh sach, va tin la may dang duoc bao ve;
+    // trong khi khong mot dong code nao doc rule do de ra quyet dinh. Do la
+    // truong hop nang nhat trong bao cao: khong phai thieu bao ve, ma la
+    // BAO CAO SAI ve bao ve.
+    //
+    // Chan ket noi THAT SU o tang mang can WFP callout (drivers/wfp-firewall)
+    // va nam ngoai pham vi mot ban sua loi. Nhung im lang thi khong chap
+    // nhan duoc. ConnectionMonitor gio DOI CHIEU moi ket noi dang hoat dong
+    // voi rule, va khi mot rule Block khop mot ket noi DANG MO, no phat su
+    // kien + ghi audit ro rang rang rule KHONG duoc thuc thi. Xem them co
+    // RulesAreEnforced ben duoi va /api/firewall/status.
+    private readonly FirewallRuleStore _rules;
+    private readonly AuditLogger _audit;
     private readonly EventBus _eventBus;
     private readonly ILogger<ConnectionMonitor> _logger;
 
+    // Rule firewall trong ban nay CHUA duoc thuc thi o tang mang. Moi noi
+    // hien thi trang thai firewall PHAI doc co nay va noi ro voi nguoi dung,
+    // thay vi de ho suy dien rang tao rule la da duoc bao ve.
+    public const bool RulesAreEnforced = false;
+
+    private readonly HashSet<string> _reportedUnenforced = new();
+
     // (pid, remoteAddress) -> danh sach timestamp cac lan quan sat ket noi.
     private readonly Dictionary<(int Pid, string Remote), List<long>> _observations = new();
+
+    // Tap (pid, remote) nhin thay o vong poll NGAY TRUOC. Dung de phan biet
+    // "mot ket noi moi vua mo" (tin hieu beacon that) voi "mot ket noi cu van
+    // dang song" (khong phai tin hieu gi ca) — xem PollConnections.
+    // Chi duoc doc/ghi trong PollConnections, chay tuan tu tren mot luong duy
+    // nhat cua BackgroundService, nen khong can khoa rieng.
+    private HashSet<(int Pid, string Remote)> _previousPollKeys = new();
     private readonly List<BeaconSuspicion> _recentSuspicions = new();
     private readonly object _lock = new();
 
-    public ConnectionMonitor(EventBus eventBus, ILogger<ConnectionMonitor> logger)
+    public ConnectionMonitor(EventBus eventBus, FirewallRuleStore rules, AuditLogger audit,
+        ILogger<ConnectionMonitor> logger)
     {
         _eventBus = eventBus;
+        _rules = rules;
+        _audit = audit;
         _logger = logger;
     }
 
@@ -71,16 +104,19 @@ public sealed class ConnectionMonitor : BackgroundService
         }
     }
 
+    // [SUA LOI CAO] Xem ghi chu tai `_previousPollKeys` ben duoi.
     private void PollConnections()
     {
         var connections = TcpTableReader.GetActiveConnectionsWithPid();
         long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var currentPollKeys = new HashSet<(int Pid, string Remote)>();
 
         foreach (var conn in connections)
         {
             if (IsPrivateOrLoopback(conn.RemoteAddress)) continue; // chi quan tam ket noi ra internet that
 
             var key = (conn.Pid, conn.RemoteAddress);
+            currentPollKeys.Add(key);
             bool shouldEvaluate = false;
             double cv = 0;
 
@@ -104,7 +140,26 @@ public sealed class ConnectionMonitor : BackgroundService
                     list = new List<long>();
                     _observations[key] = list;
                 }
-                if (list.Count == 0 || now - list[^1] > 1000) // tranh dem trung 1 ket noi qua nhieu vong poll lien tiep
+                // [SUA LOI CAO — FALSE POSITIVE HE THONG] TRUOC DAY dieu
+                // kien la `now - list[^1] > 1000`, tuc mot cua so chong
+                // trung 1 GIAY, trong khi vong poll chay moi 10 GIAY (xem
+                // ExecuteAsync). Cua so chong trung NHO HON chu ky poll thi
+                // khong chong duoc gi ca: MOT ket noi TCP song lau (tab
+                // trinh duyet, Windows Update, chinh update client cua san
+                // pham nay, mot phien SSH) duoc dem lai o MOI vong poll, deu
+                // dan chinh xac 10 giay mot lan. Do la day timestamp co he
+                // so bien thien ~0 — tuc la dinh nghia cua "beacon C2 rat
+                // deu" ma LowVariationThreshold dung de bat. Ket qua: MOI
+                // ket noi ra internet song qua ~MinSamplesForRegularity vong
+                // poll deu bi bao la beacon C2. Va vi diem rui ro bao hoa o
+                // 10 false positive, diem rui ro tong hop tut vinh vien.
+                //
+                // Sua: beacon la mot chuoi ket noi LAP LAI, khong phai mot
+                // ket noi ben bi. Chi ghi nhan mot quan sat khi cap
+                // (pid, remote) KHONG co mat o vong poll ngay truoc — tuc la
+                // mot ket noi MOI vua duoc mo — thay vi moi lan nhin thay no.
+                bool isNewConnection = !_previousPollKeys.Contains(key);
+                if (isNewConnection)
                 {
                     list.Add(now);
                     if (list.Count > MaxSamplesTracked) list.RemoveAt(0);
@@ -121,7 +176,67 @@ public sealed class ConnectionMonitor : BackgroundService
             {
                 EvaluateBeaconCandidate(key, cv, now);
             }
+
+            CheckAgainstFirewallRules(conn.Pid, conn.RemoteAddress, conn.RemotePort);
         }
+
+        _previousPollKeys = currentPollKeys;
+    }
+
+    // Doi chieu mot ket noi dang mo voi cac rule firewall nguoi dung da dat.
+    // Xem ghi chu tai _rules: day KHONG phai thuc thi, day la phat hien +
+    // bao cao trung thuc rang rule khong duoc thuc thi.
+    private void CheckAgainstFirewallRules(int pid, string remoteAddress, int remotePort)
+    {
+        string? processPath = TryGetProcessPath(pid);
+        if (string.IsNullOrEmpty(processPath)) return;
+
+        string sha256;
+        try { sha256 = ComputeFileSha256(processPath); }
+        catch { return; }
+        if (sha256.Length == 0) return;
+
+        FirewallRule? match;
+        try
+        {
+            match = _rules.FindBestMatch(sha256, FirewallDirection.Outbound, FirewallProtocol.Tcp, remotePort);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Khong tra cuu duoc rule firewall cho {Path}", processPath);
+            return;
+        }
+
+        if (match is null || match.Action != FirewallAction.Block) return;
+
+        // Chi bao MOT LAN cho moi (rule, tien trinh, dich) de khong lam ngap
+        // audit log moi 10 giay.
+        string dedupeKey = $"{match.Id}|{sha256}|{remoteAddress}:{remotePort}";
+        lock (_lock)
+        {
+            if (!_reportedUnenforced.Add(dedupeKey)) return;
+        }
+
+        string message =
+            $"Rule firewall #{match.Id} (Block) KHOP mot ket noi DANG MO tu {processPath} toi {remoteAddress}:{remotePort} — " +
+            "rule KHONG duoc thuc thi o tang mang trong ban nay, ket noi VAN DANG CHAY";
+        _logger.LogWarning("{Message}", message);
+        _audit.Log("firewall", message, new { ruleId = match.Id, processPath, remoteAddress, remotePort, enforced = false });
+        _eventBus.Publish(new CorrelationEvent
+        {
+            EntityKey = $"pid:{pid}",
+            SourceEngine = "firewall",
+            Severity = 50, // rule Block khop nhung khong duoc thuc thi — dang chu y, khong phai phat hien malware
+            Summary = message,
+            TimestampUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+        });
+    }
+
+    private static string ComputeFileSha256(string path)
+    {
+        using var stream = File.OpenRead(path);
+        using var sha = System.Security.Cryptography.SHA256.Create();
+        return Convert.ToHexString(sha.ComputeHash(stream)).ToLowerInvariant();
     }
 
     private void EvaluateBeaconCandidate((int Pid, string RemoteAddress) conn, double cv, long now)
@@ -207,16 +322,41 @@ public sealed class ConnectionMonitor : BackgroundService
         return entropy;
     }
 
+    // [SUA LOI CAO] TRUOC DAY moi dia chi KHONG phai AddressFamily.InterNetwork
+    // deu tra ve `true` ("coi nhu mang noi bo") va bi `continue` bo qua o
+    // PollConnections. Tren Windows hien dai IPv6 duoc bat mac dinh va thuong
+    // duoc uu tien hon IPv4, nen day khong phai mot gioi han nho: ma doc
+    // beacon qua IPv6 la VO HINH TOAN DIEN voi tang phat hien nay, va cach
+    // vong qua no chi la mot dia chi AAAA. Xu ly IPv6 dung nghia thay vi coi
+    // ca ho dia chi la noi bo.
     private static bool IsPrivateOrLoopback(string address)
     {
+        // Dia chi IPv6 tu bang TCP co the kem scope id ("fe80::1%12").
+        int scopeSeparator = address.IndexOf('%');
+        if (scopeSeparator >= 0) address = address[..scopeSeparator];
+
         if (!IPAddress.TryParse(address, out var ip)) return true;
         if (IPAddress.IsLoopback(ip)) return true;
+
+        if (ip.AddressFamily == AddressFamily.InterNetworkV6)
+        {
+            if (ip.IsIPv6LinkLocal || ip.IsIPv6SiteLocal || ip.IsIPv6Multicast) return true;
+            // fc00::/7 — Unique Local Address, tuong duong dai IPv4 rieng.
+            var v6 = ip.GetAddressBytes();
+            if ((v6[0] & 0xFE) == 0xFC) return true;
+            // ::ffff:a.b.c.d — IPv4 anh xa vao IPv6: danh gia theo luat IPv4.
+            if (ip.IsIPv4MappedToIPv6) return IsPrivateOrLoopback(ip.MapToIPv4().ToString());
+            return false; // IPv6 dinh tuyen duoc toan cau -> PHAI duoc theo doi
+        }
+
+        if (ip.AddressFamily != AddressFamily.InterNetwork) return true;
+
         var bytes = ip.GetAddressBytes();
-        if (ip.AddressFamily != AddressFamily.InterNetwork) return true; // chi xu ly IPv4 cho don gian
         return bytes[0] == 10 ||
                (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
                (bytes[0] == 192 && bytes[1] == 168) ||
-               bytes[0] == 127;
+               bytes[0] == 127 ||
+               (bytes[0] == 169 && bytes[1] == 254); // link-local IPv4
     }
 
     private static string? TryGetProcessPath(int pid)
@@ -274,6 +414,7 @@ internal static class TcpTableReader
     private static extern uint GetExtendedTcpTable(IntPtr pTcpTable, ref int dwOutBufLen, bool sort, int ipVersion, int tblClass, uint reserved);
 
     private const int AF_INET = 2;
+    private const int AF_INET6 = 23;
     private const int TCP_TABLE_OWNER_PID_ALL = 5;
 
     [StructLayout(LayoutKind.Sequential)]
@@ -287,38 +428,80 @@ internal static class TcpTableReader
         public uint owningPid;
     }
 
+    // MIB_TCP6ROW_OWNER_PID — doi ung IPv6 cua MIB_TCPROW_OWNER_PID.
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MIB_TCP6ROW_OWNER_PID
+    {
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)] public byte[] localAddr;
+        public uint localScopeId;
+        public uint localPort;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)] public byte[] remoteAddr;
+        public uint remoteScopeId;
+        public uint remotePort;
+        public uint state;
+        public uint owningPid;
+    }
+
     public readonly record struct TcpConnection(int Pid, string RemoteAddress, int RemotePort);
 
+    // Cong luu tru theo network byte order trong ca hai bang MIB.
+    private static int NetworkToHostPort(uint port) =>
+        ((int)port >> 8 & 0xFF) | ((int)port << 8 & 0xFF00);
+
+    // [SUA LOI CAO] TRUOC DAY ham nay CHI truy van bang TCP cua AF_INET.
+    // Tren Windows hien dai IPv6 duoc bat mac dinh va thuong duoc uu tien hon
+    // IPv4 khi ca hai kha dung, nen mot ket noi ra ngoai qua IPv6 khong bao
+    // gio xuat hien trong bang nay: no vo hinh voi ca phat hien beacon C2 lan
+    // voi viec doi chieu rule tuong lua. Truy van CA hai ho dia chi.
     public static List<TcpConnection> GetActiveConnectionsWithPid()
     {
         var results = new List<TcpConnection>();
+        ReadTable(results, AF_INET);
+        ReadTable(results, AF_INET6);
+        return results;
+    }
+
+    private static void ReadTable(List<TcpConnection> results, int addressFamily)
+    {
         int bufSize = 0;
-        GetExtendedTcpTable(IntPtr.Zero, ref bufSize, false, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0);
-        if (bufSize <= 0) return results;
+        GetExtendedTcpTable(IntPtr.Zero, ref bufSize, false, addressFamily, TCP_TABLE_OWNER_PID_ALL, 0);
+        if (bufSize <= 0) return;
 
         IntPtr buffer = Marshal.AllocHGlobal(bufSize);
         try
         {
-            uint ret = GetExtendedTcpTable(buffer, ref bufSize, false, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0);
-            if (ret != 0) return results;
+            uint ret = GetExtendedTcpTable(buffer, ref bufSize, false, addressFamily, TCP_TABLE_OWNER_PID_ALL, 0);
+            if (ret != 0) return;
 
             int rowCount = Marshal.ReadInt32(buffer);
             IntPtr rowPtr = IntPtr.Add(buffer, 4);
-            int rowSize = Marshal.SizeOf<MIB_TCPROW_OWNER_PID>();
 
-            for (int i = 0; i < rowCount; i++)
+            if (addressFamily == AF_INET)
             {
-                var row = Marshal.PtrToStructure<MIB_TCPROW_OWNER_PID>(IntPtr.Add(rowPtr, i * rowSize));
-                if (row.remoteAddr == 0) continue; // chua thiet lap ket noi that
-                var remoteIp = new IPAddress(BitConverter.GetBytes(row.remoteAddr));
-                int remotePort = ((int)row.remotePort >> 8 & 0xFF) | ((int)row.remotePort << 8 & 0xFF00);
-                results.Add(new TcpConnection((int)row.owningPid, remoteIp.ToString(), remotePort));
+                int rowSize = Marshal.SizeOf<MIB_TCPROW_OWNER_PID>();
+                for (int i = 0; i < rowCount; i++)
+                {
+                    var row = Marshal.PtrToStructure<MIB_TCPROW_OWNER_PID>(IntPtr.Add(rowPtr, i * rowSize));
+                    if (row.remoteAddr == 0) continue; // chua thiet lap ket noi that
+                    var remoteIp = new IPAddress(BitConverter.GetBytes(row.remoteAddr));
+                    results.Add(new TcpConnection((int)row.owningPid, remoteIp.ToString(), NetworkToHostPort(row.remotePort)));
+                }
+            }
+            else
+            {
+                int rowSize = Marshal.SizeOf<MIB_TCP6ROW_OWNER_PID>();
+                for (int i = 0; i < rowCount; i++)
+                {
+                    var row = Marshal.PtrToStructure<MIB_TCP6ROW_OWNER_PID>(IntPtr.Add(rowPtr, i * rowSize));
+                    if (row.remoteAddr is null || row.remoteAddr.All(b => b == 0)) continue;
+                    var remoteIp = new IPAddress(row.remoteAddr, row.remoteScopeId);
+                    results.Add(new TcpConnection((int)row.owningPid, remoteIp.ToString(), NetworkToHostPort(row.remotePort)));
+                }
             }
         }
         finally
         {
             Marshal.FreeHGlobal(buffer);
         }
-        return results;
     }
 }

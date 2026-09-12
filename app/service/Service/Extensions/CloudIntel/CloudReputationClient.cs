@@ -1,4 +1,6 @@
+using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
+using Antivirus.Service.Data;
 
 namespace Antivirus.Service.Extensions.CloudIntel;
 
@@ -20,36 +22,53 @@ public sealed record CloudReputationResult(CloudVerdict Verdict, int Prevalence,
 // trong nhat cua truong nay theo tai lieu: hash MOI GAP LAN DAU (chua
 // tung thay truoc do) luon tra ve prevalence = 0, dung boi canh bao "rat
 // hiem, dang chu y".
-public sealed class CloudReputationClient
+// [SUA LOI HIEU NANG] Chuyen sang SqliteStoreBase (WAL + busy_timeout) —
+// Lookup() vua doc vua ghi (UPDATE prevalence / INSERT) tren MOI lan goi,
+// nen la nguon nghen lock contention ro nhat trong so cac store Extensions/
+// chua duoc vá, giong loi ScanCacheStore.cs tung gap (xem SqliteStoreBase.cs).
+public sealed class CloudReputationClient : SqliteStoreBase
 {
-    private readonly string _connectionString;
+    // [SUA LOI NHO] /api/cloud-intel/lookup truoc day dua req.Sha256 (chuoi
+    // THO tu client) thang vao Lookup() ma khong kiem tra dinh dang — khong
+    // phai SQL injection (da dung parameterized query) nhung mot chuoi bat
+    // ky (rong, qua dai, khong phai hex...) van duoc INSERT nhu mot "hash"
+    // hop le vao bang mock, lam ban ghi/thong ke prevalence vo nghia. Tac
+    // dong thap vi day chi la backend mock cuc bo (khong phai cloud that),
+    // nhung kiem tra dinh dang re va giup API nhat quan voi cac endpoint
+    // khac (vi du /api/scan/file da validate Path).
+    private static readonly Regex Sha256HexPattern = new("^[a-fA-F0-9]{64}$", RegexOptions.Compiled);
 
-    public CloudReputationClient(string dbPath)
+    public static bool IsValidSha256Hex(string? value) =>
+        !string.IsNullOrEmpty(value) && Sha256HexPattern.IsMatch(value);
+
+    public CloudReputationClient(string dbPath) : base(dbPath)
     {
-        _connectionString = $"Data Source={dbPath}";
         Initialize();
     }
 
     private void Initialize()
     {
         using var conn = Open();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
+        // [SUA LOI CAO] Schema cua store nay TRUOC DAY chay bang
+        // "CREATE TABLE IF NOT EXISTS" tran, khong co danh so phien ban —
+        // nghia la mot CSDL tao boi ban cu se KHONG BAO GIO nhan duoc cot/
+        // index moi khi nguoi dung cap nhat ung dung, va loi chi bung ra
+        // luc chay tren may ho. Xem SqliteStoreBase.EnsureSchema.
+        //
+        // QUY TAC: KHONG BAO GIO sua noi dung mot phan tu da co trong mang
+        // duoi day (may nguoi dung da chay no roi, sua o day khong chay lai).
+        // Thay doi schema = THEM mot chuoi migration MOI vao CUOI mang.
+        EnsureSchema(conn, new[]
+        {
+            """
             CREATE TABLE IF NOT EXISTS cloud_reputation_mock (
                 sha256 TEXT PRIMARY KEY,
                 verdict TEXT NOT NULL DEFAULT 'unknown',
                 prevalence INTEGER NOT NULL DEFAULT 0,
                 confidence REAL NOT NULL DEFAULT 0.0
             );
-            """;
-        cmd.ExecuteNonQuery();
-    }
-
-    private SqliteConnection Open()
-    {
-        var conn = new SqliteConnection(_connectionString);
-        conn.Open();
-        return conn;
+            """,
+        });
     }
 
     public CloudReputationResult Lookup(string sha256Hex)

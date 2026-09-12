@@ -37,6 +37,28 @@ std::unique_ptr<YaraEngine> g_yara;
 std::unique_ptr<HeuristicEngine> g_heuristic;
 bool g_initialized = false;
 
+// [SUA LOI NGHIEM TRONG] Cua so hoan doi CSDL chu ky.
+//
+// Engine_UnmapSignatureDb() giai phong g_sig_db de UpdateClientService co the
+// File.Move file CSDL, roi Engine_LoadSignatureDb() nap lai. TRUOC DAY giua
+// hai loi goi do, g_initialized VAN la true, nen guard fail-closed o
+// Engine_ScanFile/Engine_ScanBuffer (chi kiem g_initialized) VAN PASS:
+//   TryApplyHashSignatureMatch -> `if (!g_sig_db) return false;` (im lang)
+//   -> khong khop YARA/heuristic -> verdict = Clean, rc = 0, kem cau
+//      "Khong phat hien qua ca ba buoc hash/YARA/heuristic" — mot khang dinh
+//      SAI, vi buoc hash chua bao gio chay.
+// Cua so nay khong phai vai mili giay: giua Unmap va Load co mot File.Copy
+// toan bo CSDL, va neu Load that bai thi trang thai keo dai toi chu ky cap
+// nhat tiep theo.
+//
+// KHONG the dung bat bien "g_sig_db != nullptr" lam dieu kien fail-closed
+// chung, vi g_sig_db CUNG null mot cach HOP LE khi may chua co CSDL chu ky
+// (Engine_Initialize tra ENGINE_INIT_SIGNATURE_DB_FAILED, YARA + heuristic
+// van chay — day la che do suy giam co chu dich, xem ScanEngineService.
+// SignatureDbMissing). Hai trang thai do khac nhau ve ban chat, nen duoc
+// theo doi rieng: co duoi day CHI danh dau cua so hoan doi.
+bool g_sig_db_swap_in_progress = false;
+
 void CopyReason(ScanResult* out, const char* text) {
     strncpy_s(out->reason, sizeof(out->reason), text, _TRUNCATE);
 }
@@ -199,9 +221,21 @@ void RunPipeline(const uint8_t* data, size_t length, const wchar_t* path_for_ext
         return;
     }
 
+    // [SUA LOI] Cau ket luan TRUOC DAY luon khang dinh da chay "ca ba buoc",
+    // ke ca khi khong buoc nao trong so do kha dung. Tren mot may chua co CSDL
+    // chu ky (g_sig_db == nullptr, che do suy giam hop le) hoac khong nap duoc
+    // YARA, verdict Clean van kem nguyen cau do — bao cao sai ve PHAM VI da
+    // quet, va do la thu khien ca nguoi dung lan nguoi dieu tra sau su co tin
+    // vao mot dieu chua tung xay ra. Noi dung thuc te da chay.
     out->verdict = ScanVerdict_Clean;
     out->stage = DetectionStage_None;
-    CopyReason(out, "Khong phat hien qua ca ba buoc hash/YARA/heuristic");
+    if (!g_sig_db) {
+        CopyReason(out, "Khong phat hien qua YARA/heuristic - CHUA doi chieu CSDL hash (khong co CSDL chu ky)");
+    } else if (!g_yara || !g_yara->IsAvailable()) {
+        CopyReason(out, "Khong phat hien qua hash/heuristic - CHUA chay YARA (khong nap duoc libyara/rule)");
+    } else {
+        CopyReason(out, "Khong phat hien qua ca ba buoc hash/YARA/heuristic");
+    }
 }
 }
 
@@ -213,9 +247,18 @@ SCANENGINE_API int Engine_Initialize(const wchar_t* signature_db_path,
     std::unique_lock<std::shared_mutex> lock(g_state_mutex);
     (void)bloom_false_positive_rate; // da co hieu luc luc build CSDL (Engine_BuildSignatureDb)
 
+    // [SUA LOI NGHIEM TRONG] TRUOC DAY ham nay LUON tra 0 (thanh cong) ke
+    // ca khi duong dan CSDL duoc chi dinh nhung nap that bai — va phia goi
+    // (Program.cs) cung bo qua gia tri tra ve, nen service chay binh thuong
+    // voi engine KHONG CO CSDL chu ky trong khi UI bao "dang bao ve". Sua:
+    // ghi nhan that bai va tra ve ma loi rieng de phia goi bat buoc phai xu
+    // ly; engine van khoi tao duoc (YARA/heuristic con chay) nhung trang
+    // thai "thieu CSDL hash" khong con bi giau di.
+    bool sig_db_failed = false;
     g_sig_db = std::make_unique<SignatureDb>();
     if (signature_db_path && !g_sig_db->Load(signature_db_path)) {
-        g_sig_db.reset(); // khong co CSDL van chay duoc (chi mat nhanh phat hien hash)
+        g_sig_db.reset();
+        sig_db_failed = true;
     }
 
     g_yara = std::make_unique<YaraEngine>();
@@ -225,7 +268,7 @@ SCANENGINE_API int Engine_Initialize(const wchar_t* signature_db_path,
 
     g_heuristic = std::make_unique<HeuristicEngine>(100);
     g_initialized = true;
-    return 0;
+    return sig_db_failed ? ENGINE_INIT_SIGNATURE_DB_FAILED : 0;
 }
 
 SCANENGINE_API void Engine_Shutdown(void) {
@@ -244,22 +287,65 @@ SCANENGINE_API void Engine_Shutdown(void) {
 SCANENGINE_API void Engine_UnmapSignatureDb(void) {
     std::unique_lock<std::shared_mutex> lock(g_state_mutex);
     g_sig_db.reset();
+    // Mo cua so hoan doi: tu day toi khi Engine_LoadSignatureDb thanh cong,
+    // moi lan quet PHAI tra ScanError chu tuyet doi khong duoc tra Clean.
+    g_sig_db_swap_in_progress = true;
 }
 
 SCANENGINE_API int Engine_LoadSignatureDb(const wchar_t* signature_db_path) {
     std::unique_lock<std::shared_mutex> lock(g_state_mutex);
     auto new_db = std::make_unique<SignatureDb>();
     if (!signature_db_path || !new_db->Load(signature_db_path)) {
-        g_sig_db.reset();
+        // [SUA LOI NGHIEM TRONG] TRUOC DAY nhanh loi goi g_sig_db.reset(),
+        // tuc la mot lan cap nhat tai ve HONG se HUY LUON CSDL CU DANG TOT
+        // — sau do moi lan quet deu bo qua buoc hash va tra Clean kem cau
+        // "Khong phat hien qua ca ba buoc", tuc la BAO CAO SAI la da quet
+        // du ba tang. Fail-closed dung nghia o day la GIU NGUYEN CSDL cu
+        // (van phat hien duoc nhung gi da biet) va bao loi len tren de
+        // UpdateClientService rollback, thay vi tu tuoc vu khi cua chinh
+        // minh. Chi thay the g_sig_db khi CSDL moi da nap THANH CONG.
         return -1;
     }
     g_sig_db = std::move(new_db);
+    // Dong cua so hoan doi CHI khi da that su co CSDL moi trong tay. Neu Load
+    // that bai o tren, co van bat va moi lan quet tiep tuc tra ScanError —
+    // dung nghia fail-closed: mat kha nang quet la trang thai nhin thay duoc,
+    // con tra Clean sai la mat kha nang quet ma khong ai biet.
+    g_sig_db_swap_in_progress = false;
     return 0;
 }
 
 SCANENGINE_API int Engine_ScanFile(const wchar_t* file_path, ScanResult* out_result) {
     if (!out_result) return -1;
     memset(out_result, 0, sizeof(ScanResult));
+
+    // [SUA LOI NGHIEM TRONG] g_initialized TRUOC DAY duoc GHI o
+    // Engine_Initialize/Engine_Shutdown nhung KHONG BAO GIO DUOC DOC — mot
+    // lan quet phat ra truoc khi Initialize chay xong, hoac sau khi
+    // Shutdown da chay (vi du service dang dung trong khi mot worker full
+    // scan con dang chay), se di tiep qua toan bo pipeline voi g_sig_db/
+    // g_yara/g_heuristic deu null va ket thuc o nhanh cuoi: verdict Clean,
+    // stage None, ma tra ve 0 (thanh cong) — tuc la "sach" va "khong co
+    // loi", dung hai dieu SAI nhat co the noi. Fail-closed: ScanError.
+    {
+        std::shared_lock<std::shared_mutex> state_lock(g_state_mutex);
+        if (!g_initialized) {
+            out_result->verdict = ScanVerdict_ScanError;
+            out_result->stage = DetectionStage_IoError;
+            CopyReason(out_result,
+                       "Engine chua khoi tao xong hoac da shutdown - KHONG duoc coi la Clean");
+            return -1;
+        }
+        // Xem g_sig_db_swap_in_progress: trong cua so hoan doi CSDL, tang hash
+        // KHONG chay duoc. Tra Clean o day la noi doi ve pham vi da quet.
+        if (g_sig_db_swap_in_progress) {
+            out_result->verdict = ScanVerdict_ScanError;
+            out_result->stage = DetectionStage_IoError;
+            CopyReason(out_result,
+                       "Dang hoan doi CSDL chu ky - tang hash tam thoi khong kha dung, KHONG duoc coi la Clean");
+            return -1;
+        }
+    }
 
     // [SUA LOI] Them tien to long-path ("\\?\") — CreateFileW tho gioi han
     // MAX_PATH (260 ky tu), trong khi thu muc WinSxS cua Windows
@@ -370,6 +456,23 @@ SCANENGINE_API int Engine_ScanFile(const wchar_t* file_path, ScanResult* out_res
         // THAT cua toan bo file da tinh o tren de gia tri tra ve luon dung
         // voi noi dung THAT cua file, bat ke RunPipeline lam gi ben trong.
         strncpy_s(out_result->sha256_hex, sizeof(out_result->sha256_hex), hex.c_str(), _TRUNCATE);
+
+        // [SUA LOI NGHIEM TRONG] Voi file lon hon kMaxInMemory, YARA va
+        // heuristic CHI nhin thay 64MB DAU. TRUOC DAY khi khong tim thay gi,
+        // RunPipeline van gan cau "Khong phat hien qua ca ba buoc hash/YARA/
+        // heuristic" — mot khang dinh SAI ve pham vi da quet, va la cong thuc
+        // ne tranh san co: don 64MB rac vao truoc payload thi payload nam
+        // ngoai tam nhin cua ca hai tang, con ket qua tra ve noi rang da quet
+        // day du.
+        //
+        // Hash tren TOAN BO file thi van dung (da tinh o tren bang streaming),
+        // nen phat hien theo chu ky khong bi anh huong. Chi YARA/heuristic bi
+        // gioi han — va dieu do phai duoc noi ra.
+        if (out_result->verdict == ScanVerdict_Clean) {
+            CopyReason(out_result,
+                       "Hash toan file khong khop CSDL; YARA/heuristic CHI quet 64MB dau "
+                       "- phan con lai cua file CHUA duoc kiem tra");
+        }
         return 0;
     }
 
@@ -382,6 +485,38 @@ SCANENGINE_API int Engine_ScanBuffer(const uint8_t* data, size_t length,
     if (!out_result || (!data && length > 0)) return -1;
     (void)virtual_name;
     std::shared_lock<std::shared_mutex> lock(g_state_mutex);
+
+    // [SUA LOI NGHIEM TRONG — GUARD DUNG, TRUOC DAY AP THIEU DUONG]
+    // Engine_ScanFile (o tren) da duoc sua de doc g_initialized va tra
+    // ScanError khi engine chua Initialize xong hoac da Shutdown. Ham nay —
+    // duong VAO DUY NHAT cho noi dung ben trong archive (ArchiveScanner giai
+    // nen tung entry ra bo nho roi goi Engine_ScanBuffer) — thi khong.
+    // Hau qua giong het cai da duoc mo ta o Engine_ScanFile: g_sig_db/
+    // g_yara/g_heuristic deu null, RunPipeline roi xuong nhanh cuoi va tra
+    // ve verdict Clean, stage None, ma tra ve 0 (thanh cong). Tuc la moi
+    // entry trong moi file nen deu duoc bao la "sach" va "khong co loi" —
+    // dung hai dieu sai nhat co the noi — trong suot ca giai doan khoi dong
+    // va sau khi shutdown (vi du service dang dung trong khi mot worker full
+    // scan con dang giai nen do).
+    // Cung mot bat bien, cung mot cach fail-closed.
+    if (!g_initialized) {
+        memset(out_result, 0, sizeof(ScanResult));
+        out_result->verdict = ScanVerdict_ScanError;
+        out_result->stage = DetectionStage_IoError;
+        CopyReason(out_result,
+                   "Engine chua khoi tao xong hoac da shutdown - KHONG duoc coi la Clean");
+        return -1;
+    }
+    // Xem g_sig_db_swap_in_progress: trong cua so hoan doi CSDL, tang hash
+    // KHONG chay duoc. Tra Clean o day la noi doi ve pham vi da quet.
+    if (g_sig_db_swap_in_progress) {
+        out_result->verdict = ScanVerdict_ScanError;
+        out_result->stage = DetectionStage_IoError;
+        CopyReason(out_result,
+                   "Dang hoan doi CSDL chu ky - tang hash tam thoi khong kha dung, KHONG duoc coi la Clean");
+        return -1;
+    }
+
     RunPipeline(data, length, nullptr, out_result);
     return 0;
 }

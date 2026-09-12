@@ -3,6 +3,15 @@
   "configurations": [
     {
       "name": "smeplan-av-service",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": [
+        "run",
+        "--project",
+        "app/service/Service/Service.csproj",
+        "--launch-profile",
+        "Service"
+      ],
+      "port": 5270,
       "url": "http://127.0.0.1:5270"
     }
   ]

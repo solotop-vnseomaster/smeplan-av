@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <assemblyIdentity version="1.0.0.0" name="SmePlanAv.Shell" />
+
+  <!--
+    [SUA LOI CHAN PHAT HANH] Shell PHAI chay quyen Administrator.
+
+    Ly do, day du:
+
+    Service phoi mot API HTTP o 127.0.0.1:5270 dieu khien MOI hanh vi bao ve:
+    them rule "cho phep luon" cho mot binary, khoi phuc file da cach ly, tat
+    real-time protection. Neu API do khong xac thuc thi BAT KY tien trinh nao
+    tren may - ke ca chinh ma doc dang bi danh gia - deu goi duoc. Vi vay moi
+    request phai kem mot token bi mat (43 ky tu ngau nhien, sinh cuc bo, xem
+    ApiTokenProvider.cs).
+
+    Token do nam trong %ProgramData%\AntivirusApp\data\api-token.txt, va
+    AclProtection.ProtectFile khoa file do lai chi cho SYSTEM +
+    Administrators - dung nhu no phai the: mot token doc duoc boi moi tien
+    trinh quyen thuong thi khong con la bi mat.
+
+    Nhung MainWindow.xaml.cs doc token TRUC TIEP TU FILE do (co chu dich:
+    mot endpoint HTTP tra token se phai khong xac thuc, tu no vo hieu hoa
+    muc dich cua token - bai toan ga-va-trung). Nen Shell chay quyen thuong
+    se bi Access denied, khong lay duoc token, va giao dien trang tron.
+
+    Do la ly do requireAdministrator o day KHONG phai su tien loi bi hy sinh
+    ma la dieu kien de ca hai dieu cung dung mot luc: token thuc su duoc bao
+    ve, VA giao dien doc duoc no.
+
+    Danh doi da can nhac: nguoi dung bam UAC moi lan mo giao dien. Chap nhan
+    duoc, va dung voi thong le - sua cai dat Windows Defender cung phai
+    elevated. Hai huong thay the deu kem hon:
+      - Cap quyen doc token cho nhom Users: moi tien trinh cua nguoi dung,
+        ke ca ma doc, doc duoc token -> vut bo chinh lop vua dung.
+      - Trao token qua named pipe/DPAPI: phan biet duoc TAI KHOAN nhung
+        KHONG phan biet duoc CHUONG TRINH trong cung tai khoan, nen ma doc
+        chay duoi tai khoan nguoi dung van lay duoc. Chi tot hon khi service
+        kiem duoc chu ky so cua tien trinh dang noi - ma binary hien chua ky.
+  -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+        <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10/11 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
+    </application>
+  </compatibility>
+
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <!-- WebView2 render sac net tren man hinh DPI cao. -->
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+    </windowsSettings>
+  </application>
+</assembly>

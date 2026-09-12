@@ -35,8 +35,23 @@ uint64_t BloomFilter::SliceToIndex(const uint8_t sha256[32], size_t slice) const
     return v % total_bits;
 }
 
-void BloomFilter::SetBit(uint64_t idx) { bits_[idx / 8] |= static_cast<uint8_t>(1u << (idx % 8)); }
-bool BloomFilter::GetBit(uint64_t idx) const { return (bits_[idx / 8] & (1u << (idx % 8))) != 0; }
+// [SUA LOI NGHIEM TRONG] Ca hai ham TRUOC DAY index thang vao bits_ ma
+// khong kiem tra bien. Chung chi duoc goi voi chi so do SliceToIndex sinh
+// ra (da mod theo total_bits) nen ve ly thuyet luon hop le — nhung "ve ly
+// thuyet" o day dua vao mot bat bien duoc thiet lap o LoadFrom, tuc la dua
+// vao du lieu tu MOT FILE TREN DIA co the bi thay the (dung threat model da
+// nêu trong chinh file nay). Mot guard mot phep so sanh la cai gia re de
+// khong bao gio doc/ghi ngoai bien heap du bat bien do bi pha.
+void BloomFilter::SetBit(uint64_t idx) {
+    size_t byte_index = static_cast<size_t>(idx / 8);
+    if (byte_index >= bits_.size()) return;
+    bits_[byte_index] |= static_cast<uint8_t>(1u << (idx % 8));
+}
+bool BloomFilter::GetBit(uint64_t idx) const {
+    size_t byte_index = static_cast<size_t>(idx / 8);
+    if (byte_index >= bits_.size()) return false; // fail-closed: coi nhu "khong co"
+    return (bits_[byte_index] & (1u << (idx % 8))) != 0;
+}
 
 void BloomFilter::Add(const uint8_t sha256[32]) {
     for (size_t i = 0; i < k_; i++) SetBit(SliceToIndex(sha256, i));
@@ -73,8 +88,28 @@ BloomFilter BloomFilter::LoadFrom(const uint8_t* data, size_t len) {
     // bi thay the"). Sua: chi gan k_ SAU KHI da xac nhan bit_count hop le
     // va du du lieu bits thuc su trong blob; neu khong, tra ve filter rong
     // an toan (k_=0, MightContain/Add khong lam gi, khong chia cho 0).
-    size_t byte_count = static_cast<size_t>((bit_count + 7) / 8);
-    if (bit_count == 0 || len < 16 + byte_count) return f;
+    // [SUA LOI NGHIEM TRONG] Ban truoc tinh `(bit_count + 7) / 8` trong khi
+    // bit_count la uint64_t doc THANG tu file. Voi bit_count >= 2^64 - 7
+    // (blob bi craft), phep cong TRAN SO va vong ve 0..6, chia 8 ra
+    // byte_count = 0. Khi do: `bit_count == 0` la false (bit_count khong he
+    // bang 0), `len < 16 + 0` cung false voi moi len >= 16 — ca hai guard
+    // deu di qua sach se. Ket qua la bits_ RONG nhung k_ duoc gan 1..8, va
+    // MightContain sau do goi GetBit(0) => bits_[0] tren mot vector rong:
+    // doc ngoai bien heap (UB), khong phai chia cho 0 nhu ghi chu cu noi.
+    // Sua: tinh so byte KHONG cong truoc khi chia (khong the tran), roi
+    // rang buoc no vao kich thuoc blob THAT SU truoc khi ep ve size_t.
+    uint64_t byte_count64 = bit_count / 8 + ((bit_count % 8) != 0 ? 1 : 0);
+    if (bit_count == 0 || byte_count64 == 0) return f;
+    // len >= 16 da duoc kiem o dau ham, nen (len - 16) khong am.
+    if (byte_count64 > static_cast<uint64_t>(len - 16)) return f;
+    size_t byte_count = static_cast<size_t>(byte_count64);
+    // [SUA LOI] k64 doc thang tu file va TRUOC DAY duoc nhan bat ke gia tri.
+    // SliceToIndex chi lay duoc toi da 8 lat 4 byte tu mot sha256 32 byte,
+    // nen k > 8 la du lieu khong hop le (CSDL hong hoac bi sua tay) — va
+    // k lon con lam MightContain quet vo ich hang ty vong. k = 0 nghia la
+    // "khong loc gi", tuong duong khong co bloom. Ca hai truong hop deu tra
+    // ve filter rong an toan thay vi tin vao gia tri tu file.
+    if (k64 == 0 || k64 > 8) return f;
     f.k_ = static_cast<size_t>(k64);
     f.bits_.assign(data + 16, data + 16 + byte_count);
     return f;

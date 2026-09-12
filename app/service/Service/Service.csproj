@@ -13,6 +13,14 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />
+    <!-- [SUA LOI CHAN PHAT HANH] Product.wxs khai <ServiceInstall> +
+         <ServiceControl Start="install" Wait="yes">, tuc MSI khoi dong
+         service va CHO no bao SERVICE_RUNNING cho SCM. Mot ung dung
+         Microsoft.NET.Sdk.Web thuan tuy khong bao gio goi
+         StartServiceCtrlDispatcher, nen SCM het thoi gian cho va tra loi
+         1053 ("dich vu khong phan hoi kip thoi") -> MSI rollback -> ban cai
+         KHONG BAO GIO hoan tat. Goi nay cung cap UseWindowsService(). -->
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="9.0.0" />
     <PackageReference Include="System.Management" Version="9.0.0" />
   </ItemGroup>
 

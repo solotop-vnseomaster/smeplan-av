@@ -14,6 +14,13 @@ public sealed class AuditLogger
     private readonly string _logPath;
     private readonly object _fileLock = new();
     private readonly ConcurrentQueue<AuditEvent> _recentForUi = new();
+
+    // Xem khoi try/catch trong Log(): ghi audit that bai KHONG duoc phep dung
+    // cac tang bao ve, nhung cung khong duoc bien mat khong dau vet — mat
+    // audit trail chinh la thu ke tan cong nham toi.
+    private int _writeFailureCount;
+    public int WriteFailureCount => Volatile.Read(ref _writeFailureCount);
+    public string? LastWriteError { get; private set; }
     private const int MaxRecentInMemory = 500;
 
     // Cache san encoding UTF-8 KHONG BOM (giong het File.AppendAllText mac
@@ -60,10 +67,39 @@ public sealed class AuditLogger
 
         var line = JsonSerializer.Serialize(evt);
         var bytes = Utf8NoBom.GetBytes(line + Environment.NewLine);
-        lock (_fileLock)
+
+        // [SUA LOI NGHIEM TRONG — DUONG TAT AV KHONG CAN DAC QUYEN]
+        //
+        // TRUOC DAY khoi ghi duoi day KHONG co try/catch. Ham nay duoc goi tu
+        // ben trong nhieu BackgroundService (UpdateClientService,
+        // DownloadsWatcherService, EventBusSweepService, RansomwareGuardService
+        // ...). Tu .NET 6, mac dinh cua host la
+        // BackgroundServiceExceptionBehavior.StopHost: mot ngoai le khong bat
+        // trong ExecuteAsync lam DUNG CA TIEN TRINH.
+        //
+        // Nghia la mot tien trinh quyen THUONG chi can mo audit.jsonl voi
+        // FileShare.None va giu handle — lan ghi audit tiep theo nem
+        // IOException, va toan bo dich vu antivirus tat. Khong can dac quyen,
+        // khong can khai thac gi ca. Cung duong do mo ra khi dia day.
+        //
+        // Nguyen tac: mot loi GHI NHAT KY khong bao gio duoc phep dung cac
+        // TANG BAO VE. Nhung cung khong duoc nuot im lang — mat audit trail la
+        // su kien bao mat that (do chinh la thu ke tan cong muon), nen no duoc
+        // dem lai va phoi ra trang thai de UI bao do.
+        try
         {
-            using var stream = new FileStream(_logPath, FileMode.Append, FileAccess.Write, FileShare.Read);
-            stream.Write(bytes, 0, bytes.Length);
+            lock (_fileLock)
+            {
+                using var stream = new FileStream(_logPath, FileMode.Append, FileAccess.Write, FileShare.Read);
+                stream.Write(bytes, 0, bytes.Length);
+            }
+        }
+        catch (Exception ex)
+        {
+            Interlocked.Increment(ref _writeFailureCount);
+            LastWriteError = $"{ex.GetType().Name}: {ex.Message}";
+            // Van giu su kien trong bo nho cho UI ben duoi — mat file khong
+            // dong nghia mat luon ban ghi gan nhat.
         }
 
         _recentForUi.Enqueue(evt);
@@ -103,19 +139,110 @@ public sealed class AuditLogger
             if (allLines.Length <= maxLines) return 0;
 
             var kept = allLines[^maxLines..];
+            var dropped = allLines[..^maxLines];
+
+            // [SUA LOI CAO — GUARD DUNG, TRUOC DAY AP THIEU DUONG] ClearAll()
+            // da duoc sua de LUU TRU thay vi HUY, voi ly do dung: "mot nhat ky
+            // xoa duoc bang chinh giao dien ma no dang giam sat thi khong con
+            // la nhat ky kiem toan". Nhung PruneToMaxLines — duong con lai di
+            // toi cung mot cho — van ghi de file va huy vinh vien nhung dong
+            // cu nhat. Va no te hon ClearAll o mot diem: no chay TU DONG,
+            // dinh ky, qua AuditLogMaintenanceService, khong can ai bam nut.
+            // Ke tan cong chi can sinh du dong nhat ky rac (vi du kich hoat
+            // hang loat su kien quet) la day duoc dau vet cua chinh minh ra
+            // khoi cua so maxLines, roi doi lan prune tu dong ke tiep xoa
+            // sach — khong de lai gi.
+            // Sua: dung CHUNG co che luu tru voi ClearAll — noi cac dong bi
+            // cat vao audit-pruned-<timestamp>.jsonl trong cung thu muc logs
+            // (da duoc ACL bao ve). Neu KHONG luu tru duoc thi KHONG cat —
+            // tha de file phinh to con hon huy bang chung trong im lang,
+            // dung nguyen tac fail-closed da ap cho ClearAll.
+            var dir = Path.GetDirectoryName(_logPath)!;
+            var stamp = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss");
+            var archivePath = Path.Combine(dir, $"audit-pruned-{stamp}.jsonl");
+            int suffix = 1;
+            while (File.Exists(archivePath))
+            {
+                archivePath = Path.Combine(dir, $"audit-pruned-{stamp}-{suffix}.jsonl");
+                suffix++;
+            }
+
+            try
+            {
+                File.WriteAllLines(archivePath, dropped);
+            }
+            catch (Exception ex)
+            {
+                // Khong nem ra ngoai (prune chay nen dinh ky, khong duoc phep
+                // lam sap service) nhung KHONG cat gi ca va phai de lai vet.
+                // lock(_fileLock) la Monitor -> reentrant tren cung mot
+                // luong, nen goi Log() o day an toan.
+                Log("system",
+                    $"KHONG luu tru duoc {dropped.Length} dong nhat ky cu vao {archivePath} " +
+                    $"({ex.GetType().Name}: {ex.Message}) — KHONG cat bot file, giu nguyen bang chung");
+                return 0;
+            }
+
             File.WriteAllLines(_logPath, kept);
-            return allLines.Length - kept.Length;
+            Log("system",
+                $"Da cat {dropped.Length} dong nhat ky cu nhat, LUU TRU tai {archivePath} (khong bi xoa)");
+            return dropped.Length;
         }
     }
 
-    // Xoa toan bo nhat ky (ca file tren dia lan bo nho trong RAM cho UI) —
-    // hanh dong nguoi dung phai xac nhan truoc trong UI (khong the hoan tac).
-    public void ClearAll()
+    // [SUA LOI CAO] TRUOC DAY ham nay ghi de file nhat ky bang chuoi rong —
+    // HUY VINH VIEN. Va no duoc phoi ra qua DELETE /api/audit, tuc la bat ky
+    // ai co token API deu xoa sach duoc moi bang chung ve nhung gi da xay ra
+    // tren may: rule "cho phep luon" ai them, file nao bi cach ly, ai khoi
+    // phuc cai gi. Mot nhat ky xoa duoc bang chinh giao dien ma no dang giam
+    // sat thi khong con la nhat ky kiem toan.
+    //
+    // Sua: LUU TRU thay vi HUY. File hien tai duoc doi ten thanh
+    // audit-<timestamp>.jsonl trong CUNG thu muc logs (da duoc ACL bao ve —
+    // xem AclProtection.ProtectAllDataDirectories), roi bat dau mot file
+    // trong moi. Nguoi dung van co trai nghiem "don sach man hinh nhat ky"
+    // nhu truoc, nhung du lieu khong bien mat khoi dia. Tra ve duong dan ban
+    // luu tru de endpoint bao lai cho nguoi dung biet no nam o dau.
+    public string? ClearAll()
     {
+        string? archivePath = null;
         lock (_fileLock)
         {
+            if (File.Exists(_logPath) && new FileInfo(_logPath).Length > 0)
+            {
+                var dir = Path.GetDirectoryName(_logPath)!;
+                var stamp = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss");
+                archivePath = Path.Combine(dir, $"audit-{stamp}.jsonl");
+
+                // Neu trung ten (hai lan xoa trong cung mot giay), them hau to.
+                int suffix = 1;
+                while (File.Exists(archivePath))
+                {
+                    archivePath = Path.Combine(dir, $"audit-{stamp}-{suffix}.jsonl");
+                    suffix++;
+                }
+
+                try
+                {
+                    File.Move(_logPath, archivePath);
+                }
+                catch
+                {
+                    // Khong luu tru duoc (file dang bi khoa?) — KHONG duoc
+                    // roi vao nhanh xoa trang. Tha khong don duoc nhat ky
+                    // con hon huy bang chung trong im lang.
+                    return null;
+                }
+            }
+
             File.WriteAllText(_logPath, string.Empty);
         }
         while (_recentForUi.TryDequeue(out _)) { }
+
+        if (archivePath is not null)
+        {
+            Log("system", $"Nhat ky truoc do da duoc LUU TRU tai {archivePath} (khong bi xoa)");
+        }
+        return archivePath;
     }
 }

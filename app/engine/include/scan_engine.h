@@ -51,8 +51,19 @@ typedef struct ScanResult {
 #pragma pack(pop)
 
 // --- Vong doi engine ---
+// [SUA LOI NGHIEM TRONG] Ma tra ve rieng cho truong hop "engine khoi tao
+// duoc (YARA/heuristic san sang) NHUNG duong dan CSDL chu ky da duoc chi
+// dinh va nap THAT BAI". TRUOC DAY truong hop nay tra ve 0 giong het thanh
+// cong hoan toan, nen phia goi khong the phan biet — service chay tiep va
+// bao cao dang bao ve trong khi tang phat hien theo hash da chet. Phia goi
+// PHAI xu ly rieng ma nay (canh bao ro rang / khong tu nhan la da bao ve
+// day du), khong duoc coi nhu 0.
+#define ENGINE_INIT_SIGNATURE_DB_FAILED 1
+
 // Nap CSDL signature (Bloom filter + sorted array, xem ARCH-07) va (neu co)
-// libyara + thu muc rule .yar (xem ARCH-08). Tra 0 neu OK.
+// libyara + thu muc rule .yar (xem ARCH-08). Tra 0 neu OK,
+// ENGINE_INIT_SIGNATURE_DB_FAILED neu chi rieng CSDL chu ky nap that bai,
+// gia tri am neu loi khac.
 SCANENGINE_API int Engine_Initialize(const wchar_t* signature_db_path,
                                       const wchar_t* yara_rules_dir,
                                       double bloom_false_positive_rate);

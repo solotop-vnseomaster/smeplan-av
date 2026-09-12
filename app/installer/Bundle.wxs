@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Bundle.wxs - bootstrapper Burn dong goi MSI thanh MOT file .exe duy nhat.
+
+  Vi sao can lop nay thay vi giao thang .msi cho nguoi dung:
+
+  1. QUYEN ADMINISTRATOR. MSI cai vao ProgramFiles64Folder va dang ky mot
+     Windows Service (LocalSystem) nen bat buoc phai chay elevated. Bundle
+     Burn tu dat requestedExecutionLevel va hien hop thoai UAC ngay khi mo,
+     thay vi de nguoi dung tu doan phai chuot phai > Run as administrator.
+     Day chinh la dieu kien de tang danh gia tin cay tien trinh
+     (Win32_ProcessStartTrace) chay duoc - chay quyen thuong thi no bao
+     "Access denied" va tang do khong hoat dong.
+
+  2. KIEM TRA .NET RUNTIME. Ca Service lan Shell deu la framework-dependent
+     (khong SelfContained). Thieu .NET 9 Desktop Runtime tren may dich thi
+     MSI van cai xong nhung khong gi chay duoc. Bundle chan trong nay bang
+     mot dieu kien cai dat ro rang thay vi de loi bung ra luc chay.
+
+  Build:
+      wix build Bundle.wxs -ext WixToolset.Bal.wixext -o build\SmePlanAvSetup.exe
+  (phai build MSI truoc - xem build-installer.ps1, script do lam ca hai buoc)
+-->
+<?ifndef ProductVersion ?>
+<?define ProductVersion = 1.0.0.0 ?>
+<?endif?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
+
+  <Bundle Name="SmePlanAv Antivirus"
+          Version="$(ProductVersion)"
+          Manufacturer="SmePlanAv"
+          UpgradeCode="3c7f9a21-5b84-4d16-9e0a-7f1b2c3d4e5f"
+          Compressed="yes">
+
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication
+          Theme="hyperlinkLicense"
+          LicenseUrl=""
+          SuppressOptionsUI="yes" />
+    </BootstrapperApplication>
+
+    <Chain>
+      <!-- Vital="yes": MSI that bai thi ca ban cai coi nhu that bai va duoc
+           rollback, khong de lai trang thai cai dat mot nua. -->
+      <MsiPackage Id="SmePlanAvMsi"
+                  SourceFile="build\SmePlanAvSetup.msi"
+                  Vital="yes" />
+    </Chain>
+  </Bundle>
+</Wix>

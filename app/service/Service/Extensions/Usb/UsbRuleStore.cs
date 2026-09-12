@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using Antivirus.Service.Data;
 
 namespace Antivirus.Service.Extensions.Usb;
 
@@ -18,21 +19,32 @@ public sealed class UsbDeviceRule
 // tra rule khop CA VID/PID LAN serial truoc, khong co moi tim rule chi
 // khop VID/PID, khong co nua moi roi ve mac dinh (ask + auto_scan=1) —
 // giu nhat quan voi thu tu tra rule cua app_rules (hash truoc, publisher sau).
-public sealed class UsbRuleStore
+// [SUA LOI HIEU NANG] Chuyen sang SqliteStoreBase (WAL + busy_timeout tren
+// moi Open()) — truoc day tu mo SqliteConnection rieng khong co co che
+// chong "database is locked" khi nhieu luong cung truy cap (xem
+// SqliteStoreBase.cs va ScanCacheStore.cs cho boi canh loi da tung xay ra).
+public sealed class UsbRuleStore : SqliteStoreBase
 {
-    private readonly string _connectionString;
-
-    public UsbRuleStore(string dbPath)
+    public UsbRuleStore(string dbPath) : base(dbPath)
     {
-        _connectionString = $"Data Source={dbPath}";
         Initialize();
     }
 
     private void Initialize()
     {
         using var conn = Open();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
+        // [SUA LOI CAO] Schema cua store nay TRUOC DAY chay bang
+        // "CREATE TABLE IF NOT EXISTS" tran, khong co danh so phien ban —
+        // nghia la mot CSDL tao boi ban cu se KHONG BAO GIO nhan duoc cot/
+        // index moi khi nguoi dung cap nhat ung dung, va loi chi bung ra
+        // luc chay tren may ho. Xem SqliteStoreBase.EnsureSchema.
+        //
+        // QUY TAC: KHONG BAO GIO sua noi dung mot phan tu da co trong mang
+        // duoi day (may nguoi dung da chay no roi, sua o day khong chay lai).
+        // Thay doi schema = THEM mot chuoi migration MOI vao CUOI mang.
+        EnsureSchema(conn, new[]
+        {
+            """
             CREATE TABLE IF NOT EXISTS usb_device_rules (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 vendor_id TEXT NOT NULL,
@@ -41,15 +53,8 @@ public sealed class UsbRuleStore
                 action TEXT NOT NULL CHECK(action IN ('allow', 'block', 'ask')),
                 auto_scan BOOLEAN NOT NULL DEFAULT 1
             );
-            """;
-        cmd.ExecuteNonQuery();
-    }
-
-    private SqliteConnection Open()
-    {
-        var conn = new SqliteConnection(_connectionString);
-        conn.Open();
-        return conn;
+            """,
+        });
     }
 
     public long Add(UsbDeviceRule rule)

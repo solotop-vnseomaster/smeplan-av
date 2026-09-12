@@ -61,10 +61,12 @@ public sealed class RiskScoreService
     private readonly UsbMonitorService _usbMonitor;
     private readonly VulnerabilityScanService _vulnerabilityScan;
     private readonly UpdateClientService _updateService;
+    private readonly Antivirus.Service.Security.ProtectionStatusService _protectionStatus;
 
     public RiskScoreService(QuarantineManager quarantine, ConnectionMonitor connectionMonitor,
         RansomwareGuardService ransomwareGuard, UsbMonitorService usbMonitor,
-        VulnerabilityScanService vulnerabilityScan, UpdateClientService updateService)
+        VulnerabilityScanService vulnerabilityScan, UpdateClientService updateService,
+        Antivirus.Service.Security.ProtectionStatusService protectionStatus)
     {
         _quarantine = quarantine;
         _connectionMonitor = connectionMonitor;
@@ -72,6 +74,7 @@ public sealed class RiskScoreService
         _usbMonitor = usbMonitor;
         _vulnerabilityScan = vulnerabilityScan;
         _updateService = updateService;
+        _protectionStatus = protectionStatus;
     }
 
     public RiskScoreResult Compute()
@@ -105,8 +108,37 @@ public sealed class RiskScoreService
         components.Add(new RiskScoreComponent { Name = "Lo hong phan mem nghiem trong chua va", PointsDeducted = vulnDeduction, Detail = $"{severeVulnerabilities} lo hong (CVSS >= 7.0)" });
         score -= vulnDeduction;
 
-        // Khong co toggle tat real-time protection trong app nay -> luon 0.
-        components.Add(new RiskScoreComponent { Name = "Real-time protection", PointsDeducted = 0, Detail = "Dang bat (khong co co che tat trong ban nay)" });
+        // [SUA LOI NGHIEM TRONG] TRUOC DAY dong nay ghi CUNG 0 diem tru kem
+        // chu thich "Dang bat (khong co co che tat trong ban nay)". Khang dinh
+        // do sai: cac tang bao ve VAN TAT duoc — chi la khong qua mot cai
+        // toggle, ma vi chung KHONG KHOI DONG DUOC (vi du
+        // Win32_ProcessStartTrace bao Access denied khi service khong chay
+        // quyen Administrator, CSDL chu ky khong nap duoc, kenh cap nhat
+        // dong...).
+        //
+        // Hau qua nhin thay truc tiep tren man hinh: the "Tong quan bao ve"
+        // bao "KHÔNG được bảo vệ" (do), the ngay ben duoi bao "100 — An toàn —
+        // mọi lớp bảo vệ đều ổn" (xanh). Hai the mau thuan nhau, nguoi dung
+        // khong biet tin cai nao — va cai mau xanh la cai de tin hon.
+        //
+        // Sua: doc tu ProtectionStatusService, dung NGUON SU THAT ma
+        // /api/status dung, nen hai the khong the lech nhau nua.
+        var degradations = _protectionStatus.Compute();
+        var criticalLayers = degradations
+            .Where(d => d.Severity == Antivirus.Service.Security.ProtectionDegradation.Critical).ToList();
+        var warningLayers = degradations
+            .Where(d => d.Severity == Antivirus.Service.Security.ProtectionDegradation.Warning).ToList();
+
+        int layerDeduction = Math.Min(50, criticalLayers.Count * 25) + Math.Min(15, warningLayers.Count * 5);
+        components.Add(new RiskScoreComponent
+        {
+            Name = "Cac tang bao ve dang hoat dong",
+            PointsDeducted = layerDeduction,
+            Detail = criticalLayers.Count > 0
+                ? $"{criticalLayers.Count} tang KHONG hoat dong, {warningLayers.Count} tang suy giam"
+                : (warningLayers.Count > 0 ? $"{warningLayers.Count} tang suy giam" : "Tat ca dang hoat dong"),
+        });
+        score -= layerDeduction;
 
         bool signatureOverdue = _updateService.Status.LastCheckedAt is null ||
             DateTimeOffset.UtcNow - _updateService.Status.LastCheckedAt.Value > UpdateOverdueThreshold;
@@ -119,9 +151,27 @@ public sealed class RiskScoreService
         });
         score -= signatureDeduction;
 
-        score = Math.Max(0, score);
-        string label = score >= SafeThreshold ? "An toan" : (score >= WarningThreshold ? "Can chu y" : "Rui ro cao");
+        var (finalScore, label) = FinalizeScore(score, criticalLayers.Count > 0);
+        return new RiskScoreResult { Score = finalScore, Label = label, Components = components };
+    }
 
-        return new RiskScoreResult { Score = score, Label = label, Components = components };
+    // Tach rieng de kiem chung duoc bang test — day la noi giu BAT BIEN quan
+    // trong nhat cua man hinh tong quan.
+    //
+    // BAT BIEN: khong the goi la "An toan" trong khi mot tang phong thu dang
+    // CHET. Neu chi tru diem thuan tuy, mot may khong co su co nao van vuot
+    // duoc SafeThreshold du process-trust da tat — dung lai chinh cai mau
+    // thuan vua sua (the tren "KHÔNG được bảo vệ" do, the duoi "An toàn"
+    // xanh). Ep tran diem khi co suy giam muc critical de nhan cua hai the
+    // luon nhat quan.
+    public static (int Score, string Label) FinalizeScore(int rawScore, bool hasCriticalLayerFailure)
+    {
+        int score = Math.Max(0, rawScore);
+        if (hasCriticalLayerFailure)
+        {
+            score = Math.Min(score, WarningThreshold - 1);
+        }
+        string label = score >= SafeThreshold ? "An toan" : (score >= WarningThreshold ? "Can chu y" : "Rui ro cao");
+        return (score, label);
     }
 }

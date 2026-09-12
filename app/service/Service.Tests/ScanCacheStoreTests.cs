@@ -29,7 +29,7 @@ public class ScanCacheStoreTests : IDisposable
     {
         _store.Upsert("C:\\a.txt", lastWriteTicks: 1000, fileSize: 50, signatureDbVersion: 5, CleanResult());
 
-        var hit = _store.TryGetCached("C:\\a.txt", lastWriteTicks: 1000, fileSize: 50, currentSignatureDbVersion: 5);
+        var hit = _store.TryGetCached("C:\\a.txt", lastWriteTicks: 1000, fileSize: 50, currentSignatureDbVersion: 5, actualSha256Hex: "abc");
 
         Assert.NotNull(hit);
         Assert.Equal(ScanVerdict.Clean, hit!.Verdict);
@@ -40,7 +40,7 @@ public class ScanCacheStoreTests : IDisposable
     {
         _store.Upsert("C:\\a.txt", lastWriteTicks: 1000, fileSize: 50, signatureDbVersion: 5, CleanResult());
 
-        var hit = _store.TryGetCached("C:\\a.txt", lastWriteTicks: 2000, fileSize: 50, currentSignatureDbVersion: 5);
+        var hit = _store.TryGetCached("C:\\a.txt", lastWriteTicks: 2000, fileSize: 50, currentSignatureDbVersion: 5, actualSha256Hex: "abc");
 
         Assert.Null(hit);
     }
@@ -50,7 +50,7 @@ public class ScanCacheStoreTests : IDisposable
     {
         _store.Upsert("C:\\a.txt", lastWriteTicks: 1000, fileSize: 50, signatureDbVersion: 5, CleanResult());
 
-        var hit = _store.TryGetCached("C:\\a.txt", lastWriteTicks: 1000, fileSize: 99, currentSignatureDbVersion: 5);
+        var hit = _store.TryGetCached("C:\\a.txt", lastWriteTicks: 1000, fileSize: 99, currentSignatureDbVersion: 5, actualSha256Hex: "abc");
 
         Assert.Null(hit);
     }
@@ -63,7 +63,7 @@ public class ScanCacheStoreTests : IDisposable
     {
         _store.Upsert("C:\\a.txt", lastWriteTicks: 1000, fileSize: 50, signatureDbVersion: 5, CleanResult());
 
-        var hit = _store.TryGetCached("C:\\a.txt", lastWriteTicks: 1000, fileSize: 50, currentSignatureDbVersion: 6);
+        var hit = _store.TryGetCached("C:\\a.txt", lastWriteTicks: 1000, fileSize: 50, currentSignatureDbVersion: 6, actualSha256Hex: "abc");
 
         Assert.Null(hit);
     }
@@ -78,7 +78,35 @@ public class ScanCacheStoreTests : IDisposable
         _store.ClearAll();
 
         Assert.Equal(0, _store.Count());
-        Assert.Null(_store.TryGetCached("C:\\a.txt", 1000, 50, 5));
+        Assert.Null(_store.TryGetCached("C:\\a.txt", 1000, 50, 5, "abc"));
+    }
+
+    // [TEST HOI QUY — LO HONG D3] Khoa cache truoc day chi gom (path, mtime,
+    // size, sigVersion). Ghi de file da cache Clean bang payload cung kich
+    // thuoc roi SetLastWriteTimeUtc ve mtime cu (quyen nguoi dung thuong la
+    // du) khien file do bi BO QUA VINH VIEN. Cache gio phai doi chieu hash
+    // noi dung that.
+    [Fact]
+    public void SameMetadata_DifferentContentHash_MustBeCacheMiss()
+    {
+        _store.Upsert("C:\a.txt", lastWriteTicks: 1000, fileSize: 50, signatureDbVersion: 5, CleanResult());
+
+        var hit = _store.TryGetCached("C:\a.txt", lastWriteTicks: 1000, fileSize: 50,
+            currentSignatureDbVersion: 5, actualSha256Hex: "deadbeef");
+
+        Assert.Null(hit);
+    }
+
+    // Khong tinh duoc hash (file bi khoa) cung KHONG duoc tin cache.
+    [Fact]
+    public void NullContentHash_MustBeCacheMiss()
+    {
+        _store.Upsert("C:\a.txt", lastWriteTicks: 1000, fileSize: 50, signatureDbVersion: 5, CleanResult());
+
+        var hit = _store.TryGetCached("C:\a.txt", lastWriteTicks: 1000, fileSize: 50,
+            currentSignatureDbVersion: 5, actualSha256Hex: null);
+
+        Assert.Null(hit);
     }
 
     public void Dispose()

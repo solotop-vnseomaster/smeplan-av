@@ -26,6 +26,50 @@
 
 SMEPLANAV_FW_CONTEXT gFwContext = { 0 };
 
+//
+// [SUA LOI NGHIEM TRONG] Go TOAN BO cac object da dang ky, theo dung thu tu
+// nguoc lai luc them, va CHI nhung cai that su da them thanh cong.
+//
+// TRUOC DAY ca nhanh Cleanup cua DriverEntry lan DriverUnload chi goi
+// FwpsCalloutUnregisterById0 + FwpmEngineClose0, kem mot comment noi rang
+// dong session "cung tu dong xoa cac object session nay so huu, NHUNG KHONG
+// xoa neu filter duoc them voi FWPM_SESSION_FLAG_DYNAMIC=0" — dung la truong
+// hop dang xay ra. Comment do mo ta chinh xac mot lo hong ma khong ai sua:
+// filter van ton tai va van tro toi callout vua bi go dang ky.
+//
+// Thu tu bat buoc: filter (nguoi dung callout) -> callout FWPM -> sublayer ->
+// go dang ky callout FWPS. Go callout FWPS truoc khi xoa filter dang tham
+// chieu no chinh la kich ban bugcheck.
+//
+static VOID
+SmePlanAvFwTeardownWfpObjects(VOID)
+{
+    if (gFwContext.EngineHandle == NULL) {
+        return;
+    }
+
+    if (gFwContext.FilterAdded) {
+        FwpmFilterDeleteById0(gFwContext.EngineHandle, gFwContext.FilterId);
+        gFwContext.FilterAdded = FALSE;
+    }
+    if (gFwContext.MgmtCalloutAdded) {
+        FwpmCalloutDeleteByKey0(gFwContext.EngineHandle, &SMEPLANAV_CALLOUT_GUID);
+        gFwContext.MgmtCalloutAdded = FALSE;
+    }
+    if (gFwContext.SubLayerAdded) {
+        FwpmSubLayerDeleteByKey0(gFwContext.EngineHandle, &SMEPLANAV_SUBLAYER_GUID);
+        gFwContext.SubLayerAdded = FALSE;
+    }
+
+    if (gFwContext.CalloutRegistered) {
+        FwpsCalloutUnregisterById0(gFwContext.CalloutId);
+        gFwContext.CalloutRegistered = FALSE;
+    }
+
+    FwpmEngineClose0(gFwContext.EngineHandle);
+    gFwContext.EngineHandle = NULL;
+}
+
 NTSTATUS
 DriverEntry(
     _In_ PDRIVER_OBJECT DriverObject,
@@ -33,7 +77,12 @@ DriverEntry(
 {
     NTSTATUS status;
     FWPM_SESSION0 session = { 0 };
-    FWPS_CALLOUT1 sCallout = { 0 };
+    // [SUA LOI NGHIEM TRONG] TRUOC DAY khai bao la FWPS_CALLOUT1 nhung duoc
+    // truyen cho FwpsCalloutRegister3, ham nay nhan `const FWPS_CALLOUT3*`.
+    // Hai struct KHONG dong nhat (chu ky cua classifyFn/notifyFn khac nhau
+    // giua cac phien ban callout), nen WDK that se tu choi bien dich —
+    // driver nay chua tung duoc dich thu.
+    FWPS_CALLOUT3 sCallout = { 0 };
     FWPM_CALLOUT0 mCallout = { 0 };
     FWPM_SUBLAYER0 subLayer = { 0 };
     FWPM_FILTER0 filter = { 0 };
@@ -64,8 +113,16 @@ DriverEntry(
     {
         UNICODE_STRING sddl;
         RtlInitUnicodeString(&sddl, L"D:P(A;;GA;;;SY)(A;;GA;;;BA)");
+    // [SUA LOI NGHIEM TRONG] Tham so DeviceCharacteristics (tham so thu 5)
+    // TRUOC DAY la 0 — THIEU FILE_DEVICE_SECURE_OPEN. Khong co co nay, SDDL
+    // o tren CHI duoc ap dung khi mo CHINH device, con moi lan mo mot
+    // "duong dan phu" duoi device (vi du \.\SmePlanAvFwCalloutat_ky) deu BO QUA
+    // security descriptor cua device — mot tien trinh quyen thuong chi can
+    // them mot dau gach cheo la qua duoc toan bo kiem tra quyen va goi
+    // duoc IOCTL. Comment ben tren tuyen bo lo hong nay da duoc va bang
+    // IoCreateDeviceSecure + SDDL; tuyen bo do KHONG dung neu thieu co nay.
         status = IoCreateDeviceSecure(
-            DriverObject, 0, &deviceName, FILE_DEVICE_NETWORK, 0, FALSE,
+            DriverObject, 0, &deviceName, FILE_DEVICE_NETWORK, FILE_DEVICE_SECURE_OPEN, FALSE,
             &sddl, NULL, &gFwContext.DeviceObject);
     }
     if (!NT_SUCCESS(status)) {
@@ -85,6 +142,20 @@ DriverEntry(
 
     // --- Mo phien WFP engine (kernel-mode: FwpmEngineOpen0 voi
     // authnService=RPC_C_AUTHN_WINNT tro thanh NULL cho kernel caller) ---
+    // [SUA LOI NGHIEM TRONG] TRUOC DAY session duoc mo voi flags = 0. Cac
+    // object FWPM them trong mot session KHONG dynamic la object BEN VUNG:
+    // chung song tiep sau khi FwpmEngineClose0 va sau ca khi driver unload.
+    // Ket hop voi DriverUnload (khong xoa filter nao) hau qua la:
+    //   - mot filter mo coi tro toi callout DA duoc go dang ky -> ket noi
+    //     outbound ke tiep lam bugcheck;
+    //   - sau reboot, filter/callout/sublayer cu VAN CON va chiem dung cac
+    //     GUID ma DriverEntry can -> FwpmSubLayerAdd0/FwpmCalloutAdd0 that
+    //     bai voi FWP_E_ALREADY_EXISTS -> driver khong bao gio nap lai duoc,
+    //     va duong sua (go driver) bi chan boi chinh nguyen nhan do.
+    // FWPM_SESSION_FLAG_DYNAMIC lam moi object do session nay them bi xoa
+    // TU DONG khi session dong (ke ca khi tien trinh/driver chet bat thuong)
+    // — dung ngu nghia can cho mot driver co the unload.
+    session.flags = FWPM_SESSION_FLAG_DYNAMIC;
     status = FwpmEngineOpen0(NULL, RPC_C_AUTHN_DEFAULT, NULL, &session, &gFwContext.EngineHandle);
     if (!NT_SUCCESS(status)) {
         IoDeleteSymbolicLink(&symLinkName);
@@ -107,13 +178,18 @@ DriverEntry(
         FwpmTransactionAbort0(gFwContext.EngineHandle);
         goto Cleanup;
     }
+    gFwContext.SubLayerAdded = TRUE;
 
     // Dang ky callout voi Filter Engine Subsystem (FWPS — kernel side).
     sCallout.calloutKey = SMEPLANAV_CALLOUT_GUID;
     sCallout.classifyFn = SmePlanAvClassifyFn;
     sCallout.notifyFn = SmePlanAvNotifyFn;
     sCallout.flowDeleteFn = NULL; // khong giu flow context nao can don dep rieng
-    status = FwpsCalloutRegister3(DriverObject, &sCallout, &gFwContext.CalloutId);
+    // [SUA LOI NGHIEM TRONG] Tham so dau cua FwpsCalloutRegister3 la
+    // `void* deviceObject` — DEVICE object ma callout gan vao, KHONG phai
+    // driver object. TRUOC DAY truyen DriverObject vao day: sai kieu doi
+    // tuong hoan toan, WFP se dereference no nhu mot DEVICE_OBJECT.
+    status = FwpsCalloutRegister3(gFwContext.DeviceObject, &sCallout, &gFwContext.CalloutId);
     if (!NT_SUCCESS(status)) {
         FwpmTransactionAbort0(gFwContext.EngineHandle);
         goto Cleanup;
@@ -130,6 +206,7 @@ DriverEntry(
         FwpmTransactionAbort0(gFwContext.EngineHandle);
         goto Cleanup;
     }
+    gFwContext.MgmtCalloutAdded = TRUE;
 
     // Filter goi callout cho MOI ket noi outbound IPv4 (khong dieu kien
     // loc them o tang filter — toan bo logic loc nam trong chinh
@@ -142,11 +219,15 @@ DriverEntry(
     filter.action.calloutKey = SMEPLANAV_CALLOUT_GUID;
     filter.weight.type = FWP_UINT8;
     filter.weight.uint8 = 0xF;
-    status = FwpmFilterAdd0(gFwContext.EngineHandle, &filter, NULL, NULL);
+    // [SUA LOI NGHIEM TRONG] TRUOC DAY tham so cuoi la NULL, tuc filterId do
+    // FwpmFilterAdd0 sinh ra bi VUT BO — khong con cach nao xoa dung filter
+    // nay luc unload. Giu lai id.
+    status = FwpmFilterAdd0(gFwContext.EngineHandle, &filter, NULL, &gFwContext.FilterId);
     if (!NT_SUCCESS(status)) {
         FwpmTransactionAbort0(gFwContext.EngineHandle);
         goto Cleanup;
     }
+    gFwContext.FilterAdded = TRUE;
 
     status = FwpmTransactionCommit0(gFwContext.EngineHandle);
     if (!NT_SUCCESS(status)) {
@@ -156,12 +237,7 @@ DriverEntry(
     return STATUS_SUCCESS;
 
 Cleanup:
-    if (gFwContext.CalloutRegistered) {
-        FwpsCalloutUnregisterById0(gFwContext.CalloutId);
-    }
-    if (gFwContext.EngineHandle) {
-        FwpmEngineClose0(gFwContext.EngineHandle);
-    }
+    SmePlanAvFwTeardownWfpObjects();
     IoDeleteSymbolicLink(&symLinkName);
     IoDeleteDevice(gFwContext.DeviceObject);
     return status;
@@ -175,18 +251,9 @@ SmePlanAvFwDriverUnload(_In_ PDRIVER_OBJECT DriverObject)
 
     UNREFERENCED_PARAMETER(DriverObject);
 
-    // Huy filter/callout theo dung thu tu nguoc lai luc dang ky — that
-    // trong ban day du can luu lai filterId tra ve tu FwpmFilterAdd0 de
-    // FwpmFilterDeleteById0 dung muc tieu; o day don gian hoa bang
-    // FwpmEngineClose0 (dong session cung tu dong xoa cac object session
-    // nay so huu, nhung KHONG xoa neu filter duoc them voi
-    // FWPM_SESSION_FLAG_DYNAMIC=0 — luu y nay can xu ly dung trong ban that).
-    if (gFwContext.CalloutRegistered) {
-        FwpsCalloutUnregisterById0(gFwContext.CalloutId);
-    }
-    if (gFwContext.EngineHandle) {
-        FwpmEngineClose0(gFwContext.EngineHandle);
-    }
+    // Huy filter/callout/sublayer theo dung thu tu nguoc lai luc dang ky —
+    // xem SmePlanAvFwTeardownWfpObjects.
+    SmePlanAvFwTeardownWfpObjects();
     IoDeleteSymbolicLink(&symLinkName);
     if (gFwContext.DeviceObject) {
         IoDeleteDevice(gFwContext.DeviceObject);
@@ -251,13 +318,22 @@ SmePlanAvFwDeviceControl(_In_ PDEVICE_OBJECT DeviceObject, _Inout_ PIRP Irp)
         break;
     }
     case IOCTL_SMEPLANAV_FW_READ_UNKNOWN_APP: {
-        // [HAN CHE MOI TRUONG] Ban day du can hang doi IRP nay cho toi khi
-        // co su kien moi (pending I/O, hoan tat qua IoCompleteRequest tu
-        // trong SmePlanAvClassifyFn khi gap cache miss) thay vi tra ve
-        // ngay — bo qua chi tiet quan ly pending-IRP (mark pending,
-        // cancel routine...) trong ban tham chieu nay de giu vi du gon,
-        // chi ghi ro day la mau thiet ke can hoan thien.
-        status = STATUS_PENDING;
+        //
+        // [SUA LOI CAO — LOI GIAO THUC IRP] TRUOC DAY nhanh nay tra ve
+        // STATUS_PENDING NHUNG van roi xuong IoCompleteRequest o cuoi ham.
+        // STATUS_PENDING la mot LOI HUA voi I/O Manager rang driver con
+        // giu IRP va se hoan tat no sau; hoan tat no NGAY khien I/O Manager
+        // thao tac tiep tren mot IRP da giai phong (use-after-free trong
+        // kernel, tu mot IOCTL binh thuong). IoMarkIrpPending — bat buoc
+        // truoc khi tra STATUS_PENDING — cung khong he duoc goi.
+        //
+        // Hang doi IRP pending o day chua bao gio duoc trien khai. Nen thay
+        // vi giu mot loi giao thuc de "giu cho" cho mot thiet ke chua co,
+        // hay that bai TO va DUNG CACH: bao ro chuc nang chua co, hoan tat
+        // IRP dung giao thuc. Service se thay STATUS_NOT_IMPLEMENTED va
+        // biet chinh xac tinh trang, thay vi lam sap may.
+        //
+        status = STATUS_NOT_IMPLEMENTED;
         break;
     }
     default:
@@ -315,8 +391,22 @@ SmePlanAvClassifyFn(
     }
 
     if (SmePlanAvFwCacheLookup(&gFwContext, processPath, remotePort, protocol, &cachedAction)) {
-        classifyOut->actionType = (cachedAction == FwAction_Block) ? FWP_ACTION_BLOCK : FWP_ACTION_PERMIT;
-        classifyOut->rights &= ~FWPS_RIGHT_ACTION_WRITE;
+        if (cachedAction == FwAction_Block) {
+            // Chi khi CHINH TA quyet dinh CHAN moi xoa quyen ghi action cua
+            // cac callout phia sau — day la mot quyet dinh chan dut khoat,
+            // khong filter nao duoc phep noi long no.
+            classifyOut->actionType = FWP_ACTION_BLOCK;
+            classifyOut->rights &= ~FWPS_RIGHT_ACTION_WRITE;
+        } else {
+            // [SUA LOI NGHIEM TRONG] TRUOC DAY nhanh PERMIT cung xoa
+            // FWPS_RIGHT_ACTION_WRITE. Xoa co do o mot quyet dinh CHO PHEP
+            // nghia la VETO moi filter dung sau trong chuoi — bao gom
+            // Windows Defender Firewall va moi rule tuong lua nguoi dung tu
+            // dat. Nghia la cai dat san pham nay lam may KEM AN TOAN HON so
+            // voi khong cai. Cho phep thi phai de cac filter khac tiep tuc
+            // co tieng noi.
+            classifyOut->actionType = FWP_ACTION_PERMIT;
+        }
         return;
     }
 
@@ -324,8 +414,11 @@ SmePlanAvClassifyFn(
     // PERMIT ngay ket noi dau tien, dong thoi bao hieu user-mode qua
     // pending IRP (chi tiet quan ly IRP: xem ghi chu trong
     // SmePlanAvFwDeviceControl).
+    // [SUA LOI NGHIEM TRONG] Xem nhanh cache-hit o tren: cache-miss la luc
+    // ta KHONG co y kien gi ca, nen cang tuyet doi khong duoc veto cac
+    // filter phia sau. Giu nguyen classifyOut->rights de Windows Defender
+    // Firewall va cac rule khac van duoc danh gia binh thuong.
     classifyOut->actionType = FWP_ACTION_PERMIT;
-    classifyOut->rights &= ~FWPS_RIGHT_ACTION_WRITE;
 }
 
 NTSTATUS NTAPI

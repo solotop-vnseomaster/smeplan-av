@@ -111,10 +111,12 @@
               <strong id="protectionState">Đang bảo vệ</strong>
             </div>
           </div>
-          <div class="status-meta">
-            <div class="meta-row"><span>Real-time watcher</span><b id="rtStatus" class="pill pill-ok">Hoạt động</b></div>
-            <div class="meta-row"><span>Downloads guard</span><b class="pill pill-ok">Hoạt động</b></div>
-            <div class="meta-row"><span>Driver kernel-mode</span><b class="pill pill-warn">Chưa nạp (xem hạn chế)</b></div>
+          <!-- Cac dong duoi day TRUOC DAY la markup TINH ("Hoat dong",
+               "Chua nap") — chung khong bao gio thay doi du service co bao
+               cao suy giam gi. Gio duoc dien tu /api/status (truong
+               `degradations`) trong refreshStatus(). -->
+          <div class="status-meta" id="protectionDegradations" aria-live="polite">
+            <div class="meta-row"><span class="muted small">Đang tải trạng thái bảo vệ…</span></div>
           </div>
         </div>
 
@@ -560,26 +562,43 @@
 </div>
 
 <!-- ============ MODAL: hộp thoại xin quyền (SEC-02/03) ============ -->
+<!-- [SUA LOI CAO — TIEP CAN] Hop thoai nay TRUOC DAY chi la mot <div> tron:
+     khong role="dialog", khong aria-modal, khong tieu de duoc lien ket. Trinh
+     doc man hinh khong he biet mot hop thoai vua mo ra, va nguoi dung dieu
+     huong bang ban phim khong co cach nao biet minh dang o dau — trong khi
+     day chinh la hop thoai quyet dinh CHO PHEP hay CHAN mot tien trinh. -->
 <div class="modal-backdrop" id="permissionModal">
-  <div class="modal glass">
-    <div class="modal-icon">⚠</div>
-    <h2>Ứng dụng cần được cấp quyền</h2>
+  <div class="modal glass" role="dialog" aria-modal="true"
+       aria-labelledby="pmTitle" aria-describedby="pmPath">
+    <div class="modal-icon" aria-hidden="true">⚠</div>
+    <h2 id="pmTitle">Ứng dụng cần được cấp quyền</h2>
     <div class="modal-field"><span>Đường dẫn</span><code id="pmPath"></code></div>
     <div class="modal-field"><span>Publisher</span><code id="pmPublisher"></code></div>
     <div class="modal-field"><span>SHA-256 (rút gọn)</span><code id="pmHash"></code></div>
     <div class="modal-actions">
-      <button class="btn btn-ghost" id="pmBlock">Chặn</button>
-      <button class="btn btn-ghost" id="pmOnce">Chỉ lần này</button>
+      <button class="btn btn-ghost" id="pmBlock" disabled>Chặn</button>
+      <button class="btn btn-ghost" id="pmOnce" disabled>Chỉ lần này</button>
       <button class="btn btn-primary" id="pmAllow" disabled>Cho phép luôn</button>
     </div>
-    <p class="muted small modal-note">Nút "Cho phép luôn" tạm khoá 0.5s để chống tự động hoá (theo đúng thiết kế chống malware tự click).</p>
+    <!-- [SUA LOI CAO] TRUOC DAY chi rieng "Cho phep luon" bi khoa 0.5s. Ma
+         doc tu dong hoa chi can gui click vao "Chi lan nay" — cung dat duoc
+         quyen chay — hoac vao "Chan" de lam nguoi dung boi roi. Khoa CA BA
+         nut trong cung mot khoang thi co che chong tu dong hoa moi co y
+         nghia; khoa mot nut chi doi huong tan cong sang nut ben canh. -->
+    <p class="muted small modal-note">Cả ba nút tạm khoá 0.5s để chống tự động hoá (chống malware tự click). Nhấn Esc để chọn "Chặn".</p>
   </div>
 </div>
 
 <!-- ============ MODAL: chi tiet file bi gan co trong luc/sau khi quet ============ -->
+<!-- [SUA LOI A11Y — GUARD DUNG, TRUOC DAY AP THIEU DUONG] #permissionModal
+     da co day du role="dialog"/aria-modal/aria-labelledby (va focus trap
+     trong app.js), nhung hop thoai nay thi khong co gi ca: trinh doc man
+     hinh khong duoc bao la mot hop thoai da mo, va nguoi dung ban phim
+     khong co duong thoat. Cung mot khuon, ap cho ca hai. -->
 <div class="modal-backdrop" id="flaggedDetailModal">
-  <div class="modal glass flagged-detail-modal">
-    <div class="modal-icon" id="fdIcon">⚠</div>
+  <div class="modal glass flagged-detail-modal" role="dialog" aria-modal="true"
+       aria-labelledby="fdVerdict" aria-describedby="fdPath">
+    <div class="modal-icon" id="fdIcon" aria-hidden="true">⚠</div>
     <h2 id="fdVerdict">Suspicious</h2>
     <div class="modal-field"><span>Đường dẫn</span><code id="fdPath"></code></div>
     <div class="modal-field"><span>Nguồn phát hiện</span><code id="fdStage"></code></div>
@@ -595,7 +614,11 @@
   </div>
 </div>
 
-<div class="toast-stack" id="toastStack"></div>
+<!-- [SUA LOI TRO NANG] TRUOC DAY khong co role/aria-live: canh bao phat
+     hien ma doc chi xuat hien truc quan, nguoi dung screen reader khong bao
+     gio duoc thong bao. role="status" + aria-live="assertive" de trinh doc
+     man hinh doc ngay khi mot toast duoc chen vao. -->
+<div class="toast-stack" id="toastStack" role="status" aria-live="assertive" aria-atomic="false"></div>
 
 <script src="js/app.js"></script>
 </body>

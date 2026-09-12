@@ -20,6 +20,14 @@ CopyFiles = Elam.DriverFiles
 [DefaultInstall.Services]
 AddService = %ServiceName%,0x00000002,Elam.Service ; SPSVCINST_ASSOCSERVICE
 
+; [SUA LOI NGHIEM TRONG — HONG MAY] SetupAPI xu ly [DefaultUninstall]
+; (DelFiles) TRUOC [DefaultUninstall.Services] (DelService). Neu qua trinh go
+; cai bi ngat giua hai buoc — mat dien, nguoi dung huy, tien trinh bi kill —
+; may con lai mot dich vu BOOT_START tro toi mot binary DA BI XOA. Truoc ban
+; sua ErrorControl ben duoi, tinh trang do la khong boot duoc nua.
+; 0x200 = SPSVCINST_STOPSERVICE. Them 0x80 (SPSVCINST_DELETEEVENTLOGENTRY)
+; khong doi thu tu, nen bien phap phong ho THAT SU o day la ErrorControl = 1:
+; du khoa dich vu con sot lai tro toi binary khong ton tai, Windows van boot.
 [DefaultUninstall]
 DelFiles = Elam.DriverFiles
 
@@ -32,7 +40,15 @@ Description    = %ServiceDescription%
 ServiceBinary  = %12%\%DriverName%.sys
 ServiceType    = 1     ; SERVICE_KERNEL_DRIVER
 StartType      = 0     ; SERVICE_BOOT_START
-ErrorControl   = 3     ; SERVICE_ERROR_CRITICAL — that bai ELAM la nghiem trong
+; [SUA LOI NGHIEM TRONG — HONG MAY] TRUOC DAY ErrorControl = 3
+; (SERVICE_ERROR_CRITICAL) di kem StartType = 0 (BOOT_START). Voi to hop do,
+; BAT KY ly do nao khien driver khong nap duoc luc boot — file .sys bi xoa,
+; chu ky khong hop le sau khi het han, mot ban Windows Update doi giao dien,
+; hoac mot lan go cai bi ngat giua chung (xem ghi chu o [DefaultUninstall])
+; — deu lam Windows BUGCHECK va thu lai vo han. May chi cuu duoc bang WinRE
+; offline. Do la thiet hai lon hon nhieu lan so vi con lai ma no bao ve.
+; SERVICE_ERROR_NORMAL: ghi loi vao Event Log, tiep tuc boot binh thuong.
+ErrorControl   = 1     ; SERVICE_ERROR_NORMAL
 
 [Elam.DriverFiles]
 %DriverName%.sys

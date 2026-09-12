@@ -44,6 +44,40 @@ public class CloudReputationClientTests : IDisposable
         Assert.Equal(0, resultB.Prevalence);
     }
 
+    // [test-coverage] IsValidSha256Hex la cong validate cho /api/cloud-intel/lookup
+    // (chan chuoi khong phai hash 64 hex hop le truoc khi vao Lookup) —
+    // truoc day khong co test nao.
+    [Theory]
+    [InlineData("a94a8fe5ccb19ba61c4c0873d391e987982fbbd3", false)] // ngan hon 64 (SHA-1, khong phai SHA-256)
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    [InlineData("khong-phai-hex-nhung-du-64-ky-tuXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX", false)]
+    public void IsValidSha256Hex_InvalidInputs_ReturnsFalse(string? value, bool expected)
+    {
+        Assert.Equal(expected, CloudReputationClient.IsValidSha256Hex(value));
+    }
+
+    [Fact]
+    public void IsValidSha256Hex_ValidLowercaseHex64_ReturnsTrue()
+    {
+        var validHash = new string('a', 64);
+        Assert.True(CloudReputationClient.IsValidSha256Hex(validHash));
+    }
+
+    [Fact]
+    public void IsValidSha256Hex_ValidUppercaseHex64_ReturnsTrue()
+    {
+        var validHash = new string('F', 64);
+        Assert.True(CloudReputationClient.IsValidSha256Hex(validHash));
+    }
+
+    [Fact]
+    public void IsValidSha256Hex_65Characters_ReturnsFalse()
+    {
+        var tooLong = new string('a', 65);
+        Assert.False(CloudReputationClient.IsValidSha256Hex(tooLong));
+    }
+
     public void Dispose()
     {
         try { File.Delete(_dbPath); } catch { }

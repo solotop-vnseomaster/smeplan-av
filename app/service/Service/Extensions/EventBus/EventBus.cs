@@ -52,6 +52,12 @@ public sealed class EntityState
     public long LastUpdateUnixMs { get; set; }
     public bool NotificationSent { get; set; }
     public int LastNotifiedSeverity { get; set; }
+
+    // [SUA LOI CAO — NHAT KY BI NHAN CHIM] So su kien LAP LAI cua cung entity
+    // nay da duoc gop lai thay vi ghi rieng tung dong vao nhat ky. Duoc bao
+    // cao trong MOT dong tong ket khi entity dong lai, de khong con so nao
+    // bien mat trong im lang.
+    public int CoalescedEventCount { get; set; }
 }
 
 // Snapshot cua mot entity dang mo, dung de UI hien thi Alert Center.
@@ -104,15 +110,46 @@ public sealed class EventBus
 
             // Chi tao/cap nhat MOT thong bao hop nhat, khong tao moi moi lan
             // (ShowOrUpdateUnifiedNotification trong tai lieu).
+            //
+            // [SUA LOI CAO — NHAT KY BI NHAN CHIM] TRUOC DAY _audit.Log nam
+            // NGOAI khoi if nay va ngoai ca lock — tuc la MOI su kien deu
+            // sinh mot dong nhat ky, trong khi chinh module nay tuyen bo
+            // nguyen tac nguoc lai ("chi MOT thong bao hop nhat, khong tao
+            // moi moi lan") va da ap dung dung nguyen tac do cho thong bao.
+            // Rieng nhat ky thi khong.
+            //
+            // Do luong tren may that: 23.499/23.634 dong nhat ky (99,4%) la
+            // su kien lap lai cua VON VEN 192 entity — chu yeu tu
+            // ConnectionMonitor, von gan co moi ket noi co nhip deu (moi
+            // ung dung poll theo timer deu the: trinh duyet, Windows Update,
+            // dong bo mail). Hau qua khong phai "hoi on": 135 su kien THAT
+            // — gom ca cac ban ghi thay doi chinh sach vua duoc bo sung —
+            // bi chon vui, va /api/audit?limit=N khong con hien duoc chung.
+            // Mot nhat ky kiem toan khong tra cuu duoc thi gan nhu khong co.
+            //
+            // Sua: ghi nhat ky theo DUNG nguyen tac cua module — mot dong
+            // khi entity xuat hien lan dau, va mot dong nua moi khi muc do
+            // nghiem trong TANG LEN. Cac lan lap lai duoc DEM chu khong bi
+            // vut bo (xem CoalescedEventCount va SweepExpiredEntities).
+            // Ket qua: ~192 dong thay vi 23.499, khong mat mot phat hien nao.
+            //
+            // Luu y: phan PHAT HIEN khong he thay doi. Danh sach day du van
+            // xem duoc qua /api/firewall/beacon-suspicions va Alert Center
+            // (ListOpenAlerts), noi giu nguyen tung dong SummaryLines.
             if (!state.NotificationSent || evt.Severity > state.LastNotifiedSeverity)
             {
                 state.NotificationSent = true;
                 state.LastNotifiedSeverity = Math.Max(state.LastNotifiedSeverity, evt.Severity);
                 UnifiedNotification?.Invoke(state);
+
+                _audit.Log(evt.SourceEngine,
+                    $"[event-bus] {evt.Summary} (entity={evt.EntityKey}, severity={evt.Severity})");
+            }
+            else
+            {
+                state.CoalescedEventCount++;
             }
         }
-
-        _audit.Log(evt.SourceEngine, $"[event-bus] {evt.Summary} (entity={evt.EntityKey}, severity={evt.Severity})");
     }
 
     // Goi dinh ky tu BackgroundService (xem EventBusSweepService) de dong
@@ -124,7 +161,21 @@ public sealed class EventBus
         {
             if (kv.Value.LastUpdateUnixMs < cutoff)
             {
-                _openEntities.TryRemove(kv.Key, out _);
+                if (_openEntities.TryRemove(kv.Key, out var closed))
+                {
+                    // [SUA LOI CAO] Khong duoc phep "gop" bang cach lang le
+                    // vut bo. Khi entity dong lai, bao cao dung so lan lap
+                    // lai da duoc gop — nguoi dieu tra sau nay van biet su
+                    // viec xay ra bao nhieu lan, chi khac la doc mot dong
+                    // thay vi cuon qua hang nghin dong giong het nhau.
+                    int coalesced;
+                    lock (closed) { coalesced = closed.CoalescedEventCount; }
+                    if (coalesced > 0)
+                    {
+                        _audit.Log("event-bus",
+                            $"[event-bus] Da dong theo doi {closed.EntityKey}: them {coalesced} su kien lap lai cung loai da duoc gop (muc cao nhat: {closed.MaxSeverity})");
+                    }
+                }
             }
         }
     }

@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using Antivirus.Service.Data;
 
 namespace Antivirus.Service.Extensions.Webcam;
 
@@ -12,35 +13,39 @@ public sealed class CamMicWhitelistEntry
 // "tai lieu moi.txt" muc "Bao ve webcam va microphone": "Whitelist RIENG
 // cho truy cap camera/mic (khac whitelist thuc thi hay whitelist ghi thu
 // muc)... khong tu dong allow chi vi da qua whitelist chu ky so chung".
-public sealed class CamMicWhitelistStore
+// [SUA LOI HIEU NANG] Chuyen sang SqliteStoreBase (WAL + busy_timeout tren
+// moi Open()) — cung loai loi "database is locked" da tung phai vá rieng
+// o ScanCacheStore.cs, truoc day store nay tu mo SqliteConnection rieng
+// khong co co che nay (xem SqliteStoreBase.cs).
+public sealed class CamMicWhitelistStore : SqliteStoreBase
 {
-    private readonly string _connectionString;
-
-    public CamMicWhitelistStore(string dbPath)
+    public CamMicWhitelistStore(string dbPath) : base(dbPath)
     {
-        _connectionString = $"Data Source={dbPath}";
         Initialize();
     }
 
     private void Initialize()
     {
         using var conn = Open();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
+        // [SUA LOI CAO] Schema cua store nay TRUOC DAY chay bang
+        // "CREATE TABLE IF NOT EXISTS" tran, khong co danh so phien ban —
+        // nghia la mot CSDL tao boi ban cu se KHONG BAO GIO nhan duoc cot/
+        // index moi khi nguoi dung cap nhat ung dung, va loi chi bung ra
+        // luc chay tren may ho. Xem SqliteStoreBase.EnsureSchema.
+        //
+        // QUY TAC: KHONG BAO GIO sua noi dung mot phan tu da co trong mang
+        // duoi day (may nguoi dung da chay no roi, sua o day khong chay lai).
+        // Thay doi schema = THEM mot chuoi migration MOI vao CUOI mang.
+        EnsureSchema(conn, new[]
+        {
+            """
             CREATE TABLE IF NOT EXISTS cam_mic_whitelist (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 process_identity TEXT NOT NULL UNIQUE,
                 added_by TEXT NOT NULL DEFAULT 'user'
             );
-            """;
-        cmd.ExecuteNonQuery();
-    }
-
-    private SqliteConnection Open()
-    {
-        var conn = new SqliteConnection(_connectionString);
-        conn.Open();
-        return conn;
+            """,
+        });
     }
 
     public long Add(string processIdentity, string addedBy = "user")

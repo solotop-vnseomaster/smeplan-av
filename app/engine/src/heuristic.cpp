@@ -53,6 +53,30 @@ const char* kModerateRiskApis[] = {
 };
 }
 
+namespace {
+// [SUA LOI CAO] So khop ten ham import trong IAT MA KHONG doc qua bien.
+//
+// TRUOC DAY doan phan tich IAT goi thang strncmp(fn_name, api, 64). Kiem
+// tra bien duy nhat truoc do la "name_offset + 2 < length" — chi bao dam
+// CO IT NHAT MOT byte doc duoc. Neu ten ham nam sat cuoi buffer (vi du tai
+// length - 3) va KHONG co byte NUL truoc khi het buffer, strncmp se doc
+// tiep toi 64 byte VUOT QUA vung heap da cap phat. Day la du lieu do ke
+// tan cong dieu khien hoan toan (mot file PE crafted), tren mot buffer
+// heap — doc ngoai bien co the lam sap tien trinh service dang quet, hoac
+// (tuy bo tri heap) ro ri noi dung bo nho ke ben vao ket qua heuristic.
+// Loi lap lai o CA HAI nhanh PE32 va PE32+.
+//
+// Sua: truyen vao SO BYTE CON LAI THAT SU va so sanh trong pham vi do;
+// bat buoc ten phai ket thuc bang NUL BEN TRONG buffer thi moi coi la khop.
+bool ImportNameEquals(const char* name, size_t available, const char* api) {
+    for (size_t i = 0; i < available; i++) {
+        if (name[i] != api[i]) return false;
+        if (api[i] == '\0') return true; // khop het, ca hai cung ket thuc
+    }
+    return false; // het buffer truoc khi ket thuc chuoi -> khong khop
+}
+} // namespace
+
 void HeuristicEngine::AnalyzePe(const uint8_t* data, size_t length, HeuristicResult& result) const {
     if (length < sizeof(IMAGE_DOS_HEADER)) return;
     auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(data);
@@ -103,6 +127,34 @@ void HeuristicEngine::AnalyzePe(const uint8_t* data, size_t length, HeuristicRes
 
     if (reinterpret_cast<const uint8_t*>(sections + section_count) > data + length) return;
 
+    // [SUA LOI NGHIEM TRONG — MOT FILE PE LAM DONG BANG CA ENGINE]
+    //
+    // section_count den thang tu FileHeader.NumberOfSections, mot WORD do
+    // NGUOI TAO FILE dieu khien, toi da 65535. RvaToOffset duyet TUYEN TINH
+    // qua mang section va duoc goi MOT LAN CHO MOI THUNK trong vong quet IAT
+    // ben duoi. Vong IAT lai co hai tang lap (descriptor x thunk) chi bi chan
+    // boi kich thuoc buffer — voi 64MB dau vao la hang trieu vong moi tang.
+    // Tong chi phi la TICH cua ba dai luong do.
+    //
+    // Toan bo viec nay chay ben trong shared_lock(g_state_mutex) o
+    // Engine_ScanFile. Mot shared_lock giu lau vo han se chan moi unique_lock
+    // (Engine_LoadSignatureDb / Engine_Initialize), va voi ngu nghia SRWLock
+    // thi cac reader den sau xep hang phia sau writer dang cho — nghia la
+    // MOI lan quet tiep theo cung dung. Tien trinh khong crash nen khong
+    // watchdog nao khoi dong lai: engine chet lang.
+    //
+    // Dat tran cung cho ca ba chieu. Cac gia tri nay rong rai hon nhieu lan
+    // so voi PE hop le (dac ta Windows chi cho phep toi 96 section o anh nap
+    // duoc; binary that hiem khi qua vai chuc DLL import).
+    constexpr WORD kMaxSectionsScanned = 96;
+    constexpr int kMaxImportDescriptors = 4096;
+    constexpr int kMaxThunksPerDescriptor = 8192;
+    if (section_count > kMaxSectionsScanned) {
+        section_count = kMaxSectionsScanned;
+        result.score += 20;
+        result.reasons.push_back("So section vuot xa muc hop le cua PE (nghi co y lam cham bo quet)");
+    }
+
     // --- Entry point ngoai section co code, hoac khong nam trong section nao ---
     bool found_section_for_entry = false;
     bool entry_in_code_section = false;
@@ -127,7 +179,9 @@ void HeuristicEngine::AnalyzePe(const uint8_t* data, size_t length, HeuristicRes
         if (desc_offset != 0 && desc_offset < length) {
             const auto* desc = reinterpret_cast<const IMAGE_IMPORT_DESCRIPTOR*>(data + desc_offset);
             int high_risk_hits = 0, moderate_risk_hits = 0;
-            for (; reinterpret_cast<const uint8_t*>(desc + 1) <= data + length && desc->Name != 0; desc++) {
+            int descriptors_seen = 0;
+            for (; reinterpret_cast<const uint8_t*>(desc + 1) <= data + length && desc->Name != 0
+                   && descriptors_seen < kMaxImportDescriptors; desc++, descriptors_seen++) {
                 DWORD thunk_rva = desc->OriginalFirstThunk != 0 ? desc->OriginalFirstThunk : desc->FirstThunk;
                 if (thunk_rva == 0) continue;
                 DWORD thunk_offset = RvaToOffset(thunk_rva, sections, section_count);
@@ -135,7 +189,9 @@ void HeuristicEngine::AnalyzePe(const uint8_t* data, size_t length, HeuristicRes
 
                 if (is_pe32_plus) {
                     auto* thunk = reinterpret_cast<const IMAGE_THUNK_DATA64*>(data + thunk_offset);
-                    for (; reinterpret_cast<const uint8_t*>(thunk + 1) <= data + length && thunk->u1.AddressOfData != 0; thunk++) {
+                    int thunks_seen = 0;
+                    for (; reinterpret_cast<const uint8_t*>(thunk + 1) <= data + length && thunk->u1.AddressOfData != 0
+                           && thunks_seen < kMaxThunksPerDescriptor; thunk++, thunks_seen++) {
                         if (thunk->u1.Ordinal & IMAGE_ORDINAL_FLAG64) continue;
                         DWORD name_offset = RvaToOffset(static_cast<DWORD>(thunk->u1.AddressOfData), sections, section_count);
                         // [SUA LOI NGHIEM TRONG] "name_offset + 2" o day PHAI
@@ -148,12 +204,18 @@ void HeuristicEngine::AnalyzePe(const uint8_t* data, size_t length, HeuristicRes
                         size_t name_offset_sz = static_cast<size_t>(name_offset);
                         if (name_offset == 0 || name_offset_sz + 2 >= length) continue;
                         const char* fn_name = reinterpret_cast<const char*>(data + name_offset_sz + 2);
-                        for (auto* api : kHighRiskApis) if (strncmp(fn_name, api, 64) == 0) high_risk_hits++;
-                        for (auto* api : kModerateRiskApis) if (strncmp(fn_name, api, 64) == 0) moderate_risk_hits++;
+                        // Xem ImportNameEquals: so byte con lai THAT SU tu
+                        // fn_name toi het buffer — strncmp(..., 64) truoc day
+                        // doc qua bien khi ten nam sat cuoi file.
+                        size_t fn_available = length - (name_offset_sz + 2);
+                        for (auto* api : kHighRiskApis) if (ImportNameEquals(fn_name, fn_available, api)) high_risk_hits++;
+                        for (auto* api : kModerateRiskApis) if (ImportNameEquals(fn_name, fn_available, api)) moderate_risk_hits++;
                     }
                 } else {
                     auto* thunk = reinterpret_cast<const IMAGE_THUNK_DATA32*>(data + thunk_offset);
-                    for (; reinterpret_cast<const uint8_t*>(thunk + 1) <= data + length && thunk->u1.AddressOfData != 0; thunk++) {
+                    int thunks_seen = 0;
+                    for (; reinterpret_cast<const uint8_t*>(thunk + 1) <= data + length && thunk->u1.AddressOfData != 0
+                           && thunks_seen < kMaxThunksPerDescriptor; thunk++, thunks_seen++) {
                         if (thunk->u1.Ordinal & IMAGE_ORDINAL_FLAG32) continue;
                         DWORD name_offset = RvaToOffset(thunk->u1.AddressOfData, sections, section_count);
                         // Xem ghi chu o nhanh PE32+ ben tren: check phai tinh
@@ -162,8 +224,12 @@ void HeuristicEngine::AnalyzePe(const uint8_t* data, size_t length, HeuristicRes
                         size_t name_offset_sz = static_cast<size_t>(name_offset);
                         if (name_offset == 0 || name_offset_sz + 2 >= length) continue;
                         const char* fn_name = reinterpret_cast<const char*>(data + name_offset_sz + 2);
-                        for (auto* api : kHighRiskApis) if (strncmp(fn_name, api, 64) == 0) high_risk_hits++;
-                        for (auto* api : kModerateRiskApis) if (strncmp(fn_name, api, 64) == 0) moderate_risk_hits++;
+                        // Xem ImportNameEquals: so byte con lai THAT SU tu
+                        // fn_name toi het buffer — strncmp(..., 64) truoc day
+                        // doc qua bien khi ten nam sat cuoi file.
+                        size_t fn_available = length - (name_offset_sz + 2);
+                        for (auto* api : kHighRiskApis) if (ImportNameEquals(fn_name, fn_available, api)) high_risk_hits++;
+                        for (auto* api : kModerateRiskApis) if (ImportNameEquals(fn_name, fn_available, api)) moderate_risk_hits++;
                     }
                 }
             }

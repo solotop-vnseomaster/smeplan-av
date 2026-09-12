@@ -209,6 +209,58 @@ public class QuarantineManagerTests : IDisposable
         Assert.False(_manager.Restore(record.QuarantineId));
     }
 
+    // [test-coverage][SUA LOI TRUNG BINH da co trong QuarantineManager.Restore]
+    // Neu vi tri goc DA CO mot file khac (vi du nguoi dung luu file moi vao
+    // dung cho trong sau khi quarantine), Restore() PHAI tu choi ghi de va
+    // tra ve false — truoc day khong co test nao xac nhan dieu nay, chi co
+    // nhanh "file quarantine bien mat tren dia" duoc test.
+    [Fact]
+    public void Restore_OriginalPathHasNewFile_RefusesToOverwrite_ReturnsFalse()
+    {
+        var record = _manager.QuarantineFile(_originalFilePath, "deadbeef", "test-detection");
+        Assert.False(File.Exists(_originalFilePath));
+
+        // Nguoi dung (hoac chuong trinh khac) tao lai mot file MOI, KHONG
+        // lien quan, dung ten tai vi tri goc.
+        const string newUnrelatedContent = "file moi hoan toan khong lien quan, KHONG duoc mat";
+        File.WriteAllText(_originalFilePath, newUnrelatedContent);
+
+        var restored = _manager.Restore(record.QuarantineId);
+
+        Assert.False(restored);
+        // Noi dung file MOI phai con nguyen, khong bi ghi de boi noi dung
+        // quarantine cu.
+        Assert.Equal(newUnrelatedContent, File.ReadAllText(_originalFilePath));
+        // Ban ghi DB phai VAN CON o trang thai Quarantined (chua chuyen
+        // Restored) — nguoi dung co the thu lai sau khi don duong.
+        var stillQuarantined = _store.Get(record.QuarantineId);
+        Assert.NotNull(stillQuarantined);
+        Assert.Equal(QuarantineStatus.Quarantined, stillQuarantined!.Status);
+    }
+
+    // [test-coverage][SUA LOI NGHIEM TRONG da co trong QuarantineFile] Neu
+    // MoveIntoQuarantine that bai GIUA CHUNG (sau khi da ghi DB voi trang
+    // thai Quarantined), ban ghi DB phai duoc ROLLBACK (xoa di) de khong
+    // "mo coi" — truoc day khong co test nao xac nhan rollback nay THAT SU
+    // xay ra. Mo phong that bai bang cach quarantine mot duong dan file
+    // KHONG TON TAI (File.ReadAllBytes trong MoveIntoQuarantine se nem
+    // FileNotFoundException).
+    [Fact]
+    public void QuarantineFile_MoveFails_RollsBackDbRecord_AndRethrows()
+    {
+        var nonExistentPath = Path.Combine(Path.GetTempPath(), $"avtest_khong_ton_tai_{Guid.NewGuid():N}.exe");
+        Assert.False(File.Exists(nonExistentPath));
+
+        var ex = Record.Exception(() => _manager.QuarantineFile(nonExistentPath, "deadbeef", "test-detection"));
+
+        Assert.NotNull(ex);
+        Assert.IsType<FileNotFoundException>(ex);
+
+        // Khong duoc con ban ghi "mo coi" nao trong DB cho duong dan nay
+        // sau khi rollback.
+        Assert.DoesNotContain(_store.List(), r => r.OriginalPath == nonExistentPath);
+    }
+
     public void Dispose()
     {
         try { File.Delete(_dbPath); } catch { }

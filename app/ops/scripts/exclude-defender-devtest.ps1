@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Loai tru thu muc cai dat va tien trinh cua app khoi pham vi quet Windows
   Defender — CHI danh cho moi truong dev/test, tranh hai minifilter driver

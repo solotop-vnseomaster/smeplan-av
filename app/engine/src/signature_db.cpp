@@ -91,8 +91,43 @@ bool SignatureDb::Load(const wchar_t* path) {
     size_t expected_size = records_offset + static_cast<size_t>(record_count) * sizeof(SignatureRecord);
     if (view_size_ < expected_size) { Close(); return false; }
 
+    // [SUA LOI NGHIEM TRONG] TRUOC DAY record_count == 0 duoc coi la mot lan
+    // nap HOP LE: mot file 24 byte chi gom magic + hai so 0 se lam Load()
+    // tra ve true, engine bao "da nap CSDL", va Lookup() sau do tra
+    // nullopt cho MOI hash (xem dong dau Lookup: record_count_ == 0 ->
+    // nullopt). Nghia la toan bo tang phat hien theo hash bi tat trong khi
+    // moi log deu bao thanh cong — khong co dau hieu nao tu ben ngoai.
+    //
+    // Mot CSDL chu ky antivirus KHONG BAO GIO hop le khi rong. Fail-closed:
+    // tu choi nap, de nguoi goi (UpdateClientService.RebuildAndSwap) giu lai
+    // CSDL CU va bao loi, thay vi am tham hoan doi bang mot CSDL rong.
+    if (record_count == 0) { Close(); return false; }
+
     records_ = reinterpret_cast<const SignatureRecord*>(view_ + records_offset);
     record_count_ = static_cast<size_t>(record_count);
+
+    // [SUA LOI NGHIEM TRONG] Bat doi xung nguy hiem trong ham nay: vung
+    // records duoc kiem tra kich thuoc rat ky o tren, nhung vung bloom
+    // TRUOC DAY khong duoc kiem tra NOI DUNG gi ca. Ma Lookup() THOAT NGAY
+    // neu bloom noi "khong co". Hau qua: chi can zero-hoa vai byte trong
+    // vung bloom la vo hieu hoa DUNG nhung chu ky mong muon — im lang tuyet
+    // doi, RecordCount() van bao du so, khong log nao ghi nhan, va moi lan
+    // quet file do deu tra ve Clean.
+    //
+    // Sua: bloom chi la TOI UU HOA, khong phai nguon su that. Xac minh moi
+    // ban ghi that su deu "co mat" trong bloom; chi mot ban ghi khong khop
+    // la du de ket luan bloom da bi sua/hong — khi do BO HAN bloom va tra
+    // cuu thang bang binary search tren records (van dung 100%, chi cham
+    // hon). Fail-closed theo dung nghia: mat toc do, KHONG mat phat hien.
+    if (bloom_.has_value() && bloom_->HashCount() > 0) {
+        for (size_t i = 0; i < record_count_; i++) {
+            if (!bloom_->MightContain(records_[i].sha256)) {
+                bloom_.reset();
+                break;
+            }
+        }
+    }
+
     return true;
 }
 
@@ -150,6 +185,15 @@ bool SignatureDb::BuildFromCsv(const wchar_t* csv_path, const wchar_t* out_db_pa
         records.push_back(rec);
     }
     in.close();
+
+    // [SUA LOI NGHIEM TRONG] Vong lap tren `continue` (bo qua im lang) o
+    // MOI dong CSV hong: hash sai dinh dang, thieu cot, threat_id/severity
+    // khong parse duoc. TRUOC DAY neu MOI dong deu hong — hoac file CSV
+    // rong — ham van di tiep, ghi ra mot CSDL 0 ban ghi va tra ve TRUE.
+    // Ket hop voi Load() (da sua o tren) va UpdateClientService, do la
+    // duong "cap nhat thanh cong" bien CSDL chu ky thanh rong.
+    // Fail-closed: khong bao gio bao build thanh cong voi 0 ban ghi.
+    if (records.empty()) return false;
 
     std::sort(records.begin(), records.end(), [](const SignatureRecord& a, const SignatureRecord& b) {
         return memcmp(a.sha256, b.sha256, 32) < 0;

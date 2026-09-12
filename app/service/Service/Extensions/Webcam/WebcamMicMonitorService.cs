@@ -75,11 +75,40 @@ public sealed class WebcamMicMonitorService : BackgroundService
         }
     }
 
+    // [SUA LOI NGHIEM TRONG] TRUOC DAY doc Registry.CurrentUser. Service chay
+    // duoi LocalSystem nen HKCU o day la hive cua chinh SYSTEM (S-1-5-18) —
+    // ConsentStore trong hive do KHONG BAO GIO ghi nhan viec nguoi dung that
+    // mo webcam/mic, nen module giam sat khong the phat hien duoc bat cu gi
+    // trong khi UI van bao dang giam sat. Sua: duyet cac hive nguoi dung
+    // DANG DUOC NAP qua HKEY_USERS (xem Common/UserProfiles.OpenLoadedUserHives)
+    // — do la noi ConsentStore cua nguoi dung dang dang nhap thuc su nam.
     private void PollDevice(string deviceType)
     {
         var currentlyActive = new HashSet<string>();
 
-        using var deviceKey = Registry.CurrentUser.OpenSubKey($@"{ConsentStoreBase}\{deviceType}");
+        foreach (var (sid, hive) in Antivirus.Service.Common.UserProfiles.OpenLoadedUserHives())
+        {
+            using (hive)
+            {
+                try { CollectActiveForHive(hive, deviceType, currentlyActive); }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Khong doc duoc ConsentStore {Device} cua hive {Sid}", deviceType, sid);
+                }
+            }
+        }
+
+        var newlyActive = currentlyActive.Except(_previouslyActive[deviceType]).ToList();
+        foreach (var identity in newlyActive)
+        {
+            HandleNewAccess(deviceType, identity);
+        }
+        _previouslyActive[deviceType] = currentlyActive;
+    }
+
+    private static void CollectActiveForHive(RegistryKey hive, string deviceType, HashSet<string> currentlyActive)
+    {
+        using var deviceKey = hive.OpenSubKey($@"{ConsentStoreBase}\{deviceType}");
         if (deviceKey is null) return;
 
         foreach (var subKeyName in deviceKey.GetSubKeyNames())
@@ -107,13 +136,6 @@ public sealed class WebcamMicMonitorService : BackgroundService
                 currentlyActive.Add(subKeyName);
             }
         }
-
-        var newlyActive = currentlyActive.Except(_previouslyActive[deviceType]).ToList();
-        foreach (var identity in newlyActive)
-        {
-            HandleNewAccess(deviceType, identity);
-        }
-        _previouslyActive[deviceType] = currentlyActive;
     }
 
     // LastUsedTimeStop == 0 nghia la thiet bi DANG duoc mo (chua ket thuc

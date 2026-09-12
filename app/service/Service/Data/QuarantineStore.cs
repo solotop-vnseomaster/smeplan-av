@@ -16,8 +16,18 @@ public sealed class QuarantineStore : SqliteStoreBase
     private void Initialize()
     {
         using var conn = Open();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
+        // [SUA LOI CAO] Schema cua store nay TRUOC DAY chay bang
+        // "CREATE TABLE IF NOT EXISTS" tran, khong co danh so phien ban —
+        // nghia la mot CSDL tao boi ban cu se KHONG BAO GIO nhan duoc cot/
+        // index moi khi nguoi dung cap nhat ung dung, va loi chi bung ra
+        // luc chay tren may ho. Xem SqliteStoreBase.EnsureSchema.
+        //
+        // QUY TAC: KHONG BAO GIO sua noi dung mot phan tu da co trong mang
+        // duoi day (may nguoi dung da chay no roi, sua o day khong chay lai).
+        // Thay doi schema = THEM mot chuoi migration MOI vao CUOI mang.
+        EnsureSchema(conn, new[]
+        {
+            """
             CREATE TABLE IF NOT EXISTS quarantine_records (
                 quarantine_id TEXT PRIMARY KEY,
                 original_path TEXT NOT NULL,
@@ -28,8 +38,8 @@ public sealed class QuarantineStore : SqliteStoreBase
                 file_size INTEGER NOT NULL,
                 status TEXT NOT NULL
             );
-            """;
-        cmd.ExecuteNonQuery();
+            """,
+        });
     }
 
     public void Add(QuarantineRecord record)

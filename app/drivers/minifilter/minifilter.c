@@ -181,18 +181,43 @@ SmePlanAvMfIsExecutableCandidate(_In_ PCUNICODE_STRING FileName)
     // MZ); file du lieu thong thuong cho mo ngay va quet bat dong bo" —
     // kiem tra phan mo rong o day (kiem tra magic bytes MZ can doc byte
     // dau file, thuc hien o buoc doc them trong ban day du).
+    //
+    // [SUA LOI NGHIEM TRONG] Tham so truyen vao la nameInfo->Extension cua
+    // FLT_FILE_NAME_INFORMATION, va truong do KHONG chua dau cham: voi
+    // "foo.exe" no la L"exe" (3 ky tu), khong phai L".exe". Code cu so
+    // phan duoi cua chuoi voi cac hang co dau cham (L".exe", 4 ky tu) nen
+    // dieu kien FileName->Length >= ext.Length KHONG BAO GIO dung, ham
+    // LUON tra FALSE, va SmePlanAvMfPreCreateCallback luon di vao nhanh
+    // "khong phai file thuc thi" — tuc la TOAN BO duong quet dong bo luc
+    // mo file KHONG BAO GIO chay, tren moi file, ke ca .exe. Sua: so sanh
+    // TRUC TIEP voi phan mo rong khong dau cham, va bo qua dau cham dan
+    // dau neu phia goi co truyen vao dang co cham (phong thu cho ca hai
+    // dang dau vao thay vi phu thuoc mot quy uoc de hieu nham).
+    //
+    UNICODE_STRING name;
     ULONG i;
+
+    if (FileName == NULL || FileName->Buffer == NULL || FileName->Length == 0) {
+        return FALSE;
+    }
+
+    name = *FileName;
+    if (name.Length >= sizeof(WCHAR) && name.Buffer[0] == L'.') {
+        name.Buffer++;
+        name.Length -= sizeof(WCHAR);
+        name.MaximumLength = name.Length;
+    }
+
     for (i = 0; i < gExecutableExtensionsCount; i++) {
         UNICODE_STRING ext;
         RtlInitUnicodeString(&ext, gExecutableExtensions[i]);
-        if (FileName->Length >= ext.Length) {
-            UNICODE_STRING tail;
-            tail.Buffer = (PWCH)((PUCHAR)FileName->Buffer + FileName->Length - ext.Length);
-            tail.Length = ext.Length;
-            tail.MaximumLength = ext.Length;
-            if (RtlEqualUnicodeString(&tail, &ext, TRUE)) {
-                return TRUE;
-            }
+        // gExecutableExtensions luu dang CO dau cham (dung chung khai niem
+        // voi tang user-mode) — bo dau cham o day de so voi Extension.
+        ext.Buffer++;
+        ext.Length -= sizeof(WCHAR);
+        ext.MaximumLength = ext.Length;
+        if (RtlEqualUnicodeString(&name, &ext, TRUE)) {
+            return TRUE;
         }
     }
     return FALSE;
@@ -268,6 +293,30 @@ SmePlanAvMfPreCreateCallback(
     // (Ghi delta (perfEnd - perfStart) * 1000000 / perfFreq vao buffer log
     // noi bo trong ban day du — NFR-OBS-01.)
     UNREFERENCED_PARAMETER(perfEnd);
+
+    //
+    // [SUA LOI NGHIEM TRONG — HONG MAY] Nhanh SmePlanAvMfProcessNotifyCallbackEx
+    // da co bypass cho STATUS_PORT_DISCONNECTED, voi ly do dung va da viet
+    // ro tai do. Nhung nhanh NAY — duong mo file, chay som hon nhieu — thi
+    // khong: `!NT_SUCCESS(status)` bao trum ca STATUS_PORT_DISCONNECTED
+    // (0xC0000037) va tu choi.
+    //
+    // Driver la BOOT_START. Truoc khi service user-mode kip ket noi cong
+    // giao tiep, gContext.ClientPort == NULL nen MOI truy van tra ve
+    // STATUS_PORT_DISCONNECTED, va nhanh nay tu choi MOI lan mo file thuc
+    // thi — bao gom ntdll.dll, csrss.exe, wininit.exe, services.exe. Va vi
+    // chinh service AV cung phai mo file de khoi dong, khoa chet nay TU DUY
+    // TRI: may khong bao gio vao duoc desktop, chi cuu duoc offline qua WinRE.
+    //
+    // Phan biet ro hai tinh huong khac han nhau:
+    //  - CHUA CO service ket noi  -> bao ve CHUA SAN SANG. Chan mu o day
+    //    khong phai fail-closed, ma la tu huy. Cho qua.
+    //  - CO service nhung khong tra loi kip / loi khac -> deny-and-log theo
+    //    NFR-AVAIL-03, giu nguyen nhu cu.
+    //
+    if (status == STATUS_PORT_DISCONNECTED) {
+        return FLT_PREOP_SUCCESS_NO_CALLBACK;
+    }
 
     if (!NT_SUCCESS(status)) {
         // NFR-AVAIL-03: service khong phan hoi kip -> deny-and-log mac dinh
@@ -393,7 +442,43 @@ SmePlanAvMfProcessNotifyCallbackEx(
         query.FilePath, CreateInfo->ImageFileName->Buffer,
         min(CreateInfo->ImageFileName->Length, sizeof(query.FilePath) - sizeof(WCHAR)));
 
+    //
+    // [SUA LOI NGHIEM TRONG — HONG MAY] Driver nay la BOOT_START (xem
+    // minifilter.inf). Truoc khi service user-mode ket noi duoc, moi
+    // SmePlanAvMfQueryServiceDecision tra ve STATUS_PORT_DISCONNECTED, va
+    // nhanh ben duoi TU CHOI moi lan tao tien trinh — ke ca smss.exe,
+    // csrss.exe, wininit.exe, services.exe. Do la mot khoa chet TU DUY TRI:
+    // moi cach cuu chua (bao gom chinh viec khoi dong service AV) deu can
+    // tao tien trinh, ma tao tien trinh dang bi chan. May khong bao gio
+    // boot len duoc va chi sua duoc offline qua WinRE.
+    //
+    // Sua bang hai lop:
+    //  (1) khi service CHUA HE ket noi (port NULL), KHONG chan gi ca —
+    //      giai doan do la truoc khi bao ve san sang, chan mu la tu huy
+    //      chu khong phai fail-closed;
+    //  (2) tien trinh he thong toi quan trong LUON duoc cho phep, ke ca khi
+    //      service dang chay nhung khong tra loi kip — chung nam duoi
+    //      \Windows\System32 va bi chan thi may sup do ngay lap tuc.
+    //
+    //
+    // [SUA LOI BIEN DICH — BIEN CHUA KHOI TAO] `status` va `reply` duoc khai
+    // bao o dau ham roi DUNG NGAY tai day ma KHONG CO loi goi nao gan gia
+    // tri cho chung: loi goi SmePlanAvMfQueryServiceDecision bi thieu han.
+    // Hau qua: (1) voi /WX cua WDK day la C4700 -> build FAIL, nen driver
+    // nay chua tung bien dich duoc; (2) neu co bien dich duoc thi moi quyet
+    // dinh cho/chan tien trinh moi deu doc rac tren stack.
+    // Sua: goi service that su, giong het hai diem goi con lai.
+    //
+    RtlZeroMemory(&reply, sizeof(reply));
     status = SmePlanAvMfQueryServiceDecision(&query, &reply);
+
+    if (status == STATUS_PORT_DISCONNECTED) {
+        return;
+    }
+
+    if (!reply.Allow && SmePlanAvMfIsCriticalSystemProcess(CreateInfo->ImageFileName)) {
+        return;
+    }
 
     if (!NT_SUCCESS(status) || !reply.Allow) {
         // business-rules/05 "Quyet dinh cap quyen cho tien trinh moi":
@@ -409,6 +494,111 @@ SmePlanAvMfProcessNotifyCallbackEx(
     }
 }
 
+// Tim mot chuoi con (khong phan biet hoa thuong) trong mot UNICODE_STRING.
+// UNICODE_STRING KHONG bao dam ket thuc bang NUL nen khong duoc dung ham
+// chuoi C thong thuong o day.
+BOOLEAN
+SmePlanAvMfContainsSubstring(_In_ PCUNICODE_STRING Haystack, _In_ PCUNICODE_STRING Needle)
+{
+    USHORT hChars, nChars, i;
+
+    if (Haystack == NULL || Needle == NULL || Needle->Length == 0) return FALSE;
+    if (Haystack->Length < Needle->Length) return FALSE;
+
+    hChars = (USHORT)(Haystack->Length / sizeof(WCHAR));
+    nChars = (USHORT)(Needle->Length / sizeof(WCHAR));
+
+    for (i = 0; i + nChars <= hChars; i++) {
+        UNICODE_STRING window;
+        window.Buffer = Haystack->Buffer + i;
+        window.Length = Needle->Length;
+        window.MaximumLength = Needle->Length;
+        if (RtlEqualUnicodeString(&window, Needle, TRUE)) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+//
+// [SUA LOI NGHIEM TRONG — HONG MAY] Whitelist cung cho cac tien trinh ma
+// neu bi chan thi Windows khong the khoi dong hoac khong the tiep tuc chay.
+// So khop theo TEN FILE o cuoi duong dan VA yeu cau duong dan nam duoi
+// \Windows\System32 — chi ten file thoi la du de mot binary bat ky tu dat
+// ten "csrss.exe" o thu muc khac de tu whitelist.
+//
+BOOLEAN
+SmePlanAvMfIsCriticalSystemProcess(_In_ PCUNICODE_STRING ImageFileName)
+{
+    static PCWSTR const criticalNames[] = {
+        L"\\smss.exe", L"\\csrss.exe", L"\\wininit.exe", L"\\winlogon.exe",
+        L"\\services.exe", L"\\lsass.exe", L"\\svchost.exe", L"\\userinit.exe"
+    };
+    ULONG i;
+
+    if (ImageFileName == NULL || ImageFileName->Buffer == NULL) {
+        return FALSE;
+    }
+
+    //
+    // [SUA LOI NGHIEM TRONG] TRUOC DAY ham nay lam HAI phep kiem tra ROI RAC:
+    // (1) chuoi "\Windows\System32\" xuat hien O DAU DO trong duong dan
+    // (SmePlanAvMfContainsSubstring — so khop chuoi con, khong neo vao dau
+    // hay cuoi), va (2) duong dan KET THUC bang mot trong cac ten trong
+    // criticalNames. Hai dieu kien do khong rang buoc gi voi nhau: ca hai
+    // deu dung voi
+    //   \Device\HarddiskVolume3\Users\nam\AppData\Local\Temp\Windows\System32\svchost.exe
+    // Bat ky nguoi dung KHONG dac quyen nao cung tao duoc cay thu muc do va
+    // dat ten file la svchost.exe. Va vi ham nay duoc goi TRUOC nhanh deny
+    // ("if (!reply.Allow && IsCriticalSystemProcess) return;"), no la mot
+    // duong TU-WHITELIST vuot qua 100% quyet dinh chan — khong phai ne tranh
+    // mot lop phat hien, ma la ne tranh chinh viec THUC THI quyet dinh.
+    //
+    // Sua: so khop MOT lan duy nhat tren toan bo hau to
+    // "\Windows\System32\<ten>" — vi tri cua System32 va vi tri cua ten file
+    // khong con tach roi nhau duoc — VA yeu cau phan dung truoc hau to do
+    // phai la goc mot volume, de \Users\nam\Windows\System32\svchost.exe
+    // cung khong lot qua.
+    //
+    for (i = 0; i < ARRAYSIZE(criticalNames); i++) {
+        UNICODE_STRING suffix;
+        WCHAR suffixBuffer[64];
+        NTSTATUS st;
+
+        suffix.Buffer = suffixBuffer;
+        suffix.Length = 0;
+        suffix.MaximumLength = sizeof(suffixBuffer);
+
+        st = RtlAppendUnicodeToString(&suffix, L"\\Windows\\System32");
+        if (!NT_SUCCESS(st)) continue;
+        st = RtlAppendUnicodeToString(&suffix, criticalNames[i]); // criticalNames[] da bat dau bang dau '\'
+        if (!NT_SUCCESS(st)) continue;
+
+        if (ImageFileName->Length >= suffix.Length) {
+            UNICODE_STRING tail;
+            tail.Buffer = (PWCH)((PUCHAR)ImageFileName->Buffer + ImageFileName->Length - suffix.Length);
+            tail.Length = suffix.Length;
+            tail.MaximumLength = suffix.Length;
+            if (RtlEqualUnicodeString(&tail, &suffix, TRUE)) {
+                //
+                // Phan dung TRUOC hau to phai la goc mot volume
+                // ("\Device\HarddiskVolumeN") — dung 2 dau '\' va khong hon.
+                //
+                USHORT prefixChars = (USHORT)((ImageFileName->Length - suffix.Length) / sizeof(WCHAR));
+                USHORT k;
+                ULONG separators = 0;
+                for (k = 0; k < prefixChars; k++) {
+                    if (ImageFileName->Buffer[k] == L'\\') separators++;
+                }
+                if (separators == 2) {
+                    return TRUE;
+                }
+            }
+        }
+    }
+    return FALSE;
+}
+
 NTSTATUS
 SmePlanAvMfQueryServiceDecision(
     _In_ PDRIVER_TO_SERVICE_MSG Query,
@@ -417,6 +607,15 @@ SmePlanAvMfQueryServiceDecision(
     NTSTATUS status;
     ULONG replyLength = sizeof(SERVICE_TO_DRIVER_REPLY);
     LARGE_INTEGER timeout;
+
+    //
+    // [SUA LOI NGHIEM TRONG] Reply la bien STACK cua phia goi va TRUOC DAY
+    // khong duoc khoi tao o dau ca. Ket hop voi loi NT_SUCCESS ben duoi,
+    // moi lan het thoi gian cho la quyet dinh allow/deny duoc doc tu RAC
+    // TREN STACK. Xoa sach o day de moi duong thoat deu co gia tri xac dinh
+    // (Allow = 0 = tu choi), ke ca khi FltSendMessage khong ghi gi vao.
+    //
+    RtlZeroMemory(Reply, sizeof(SERVICE_TO_DRIVER_REPLY));
 
     if (gContext.ClientPort == NULL) {
         // Service chua ket noi (vi du dang khoi dong lai) -> deny-and-log.
@@ -434,7 +633,39 @@ SmePlanAvMfQueryServiceDecision(
         Query, sizeof(DRIVER_TO_SERVICE_MSG),
         Reply, &replyLength, &timeout);
 
-    return status;
+    //
+    // [SUA LOI NGHIEM TRONG] FltSendMessage tra ve STATUS_TIMEOUT (0x00000102)
+    // khi het thoi gian cho — va STATUS_TIMEOUT NAM TRONG LOP "SUCCESS" cua
+    // NTSTATUS, nen NT_SUCCESS(STATUS_TIMEOUT) la TRUE. Moi kiem tra
+    // `if (!NT_SUCCESS(status))` o phia goi (deny-and-log khi timeout) do do
+    // KHONG BAO GIO chay khi thuc su timeout; luong roi thang xuong
+    // `if (!reply.Allow)` voi reply chua he duoc ghi. Chi can service ban
+    // qua 50ms la quyet dinh chan/cho la rac tren stack. Loi nay lap lai o
+    // ca 3 diem goi, nen sua tap trung tai day: quy doi MOI ket qua khong
+    // phai STATUS_SUCCESS thanh mot ma loi that su, va bao dam Reply van la
+    // "tu choi" (da RtlZeroMemory o tren).
+    //
+    if (status != STATUS_SUCCESS) {
+        RtlZeroMemory(Reply, sizeof(SERVICE_TO_DRIVER_REPLY));
+        if (status == STATUS_TIMEOUT) {
+            return STATUS_IO_TIMEOUT;
+        }
+        if (NT_SUCCESS(status)) {
+            // Bat ky ma "success" khac ma khong phai STATUS_SUCCESS (vi du
+            // STATUS_PENDING) cung khong dam bao Reply da co du lieu.
+            return STATUS_UNSUCCESSFUL;
+        }
+        return status;
+    }
+
+    // Phan hoi ngan hon kich thuoc struct nghia la service tra ve du lieu
+    // khong day du — khong duoc tin.
+    if (replyLength < sizeof(SERVICE_TO_DRIVER_REPLY)) {
+        RtlZeroMemory(Reply, sizeof(SERVICE_TO_DRIVER_REPLY));
+        return STATUS_INFO_LENGTH_MISMATCH;
+    }
+
+    return STATUS_SUCCESS;
 }
 
 // EXT-RW-01: nhan thong diep PUSH tu service qua FilterSendMessage
@@ -450,7 +681,6 @@ SmePlanAvMfMessageNotifyCallback(
     _In_ ULONG OutputBufferSize,
     _Out_ PULONG ReturnOutputBufferLength)
 {
-    PPUSH_SET_PROTECTED_FOLDERS_MSG msg;
     KIRQL oldIrql;
     ULONG count;
 
@@ -460,55 +690,102 @@ SmePlanAvMfMessageNotifyCallback(
 
     *ReturnOutputBufferLength = 0;
 
-    if (InputBuffer == NULL || InputBufferSize < sizeof(PUSH_SET_PROTECTED_FOLDERS_MSG)) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    msg = (PPUSH_SET_PROTECTED_FOLDERS_MSG)InputBuffer;
-    if (msg->Type != PushMsgType_SetProtectedFolders) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    count = min(msg->FolderCount, MINIFILTER_MAX_PROTECTED_FOLDERS);
-
-    // [SUA LOI NGHIEM TRONG] msg->Folders la mang WCHAR co dinh
-    // (MINIFILTER_MAX_FOLDER_PATH_CHARS moi phan tu) NHAN THANG tu service
-    // qua FilterSendMessage — cung LOAI rui ro da sua o wfp_callout.c
-    // SmePlanAvFwDeviceControl (IOCTL_SMEPLANAV_FW_PUSH_RULE): neu mot
-    // phan tu KHONG co NUL trong pham vi MINIFILTER_MAX_FOLDER_PATH_CHARS
-    // (vi du service co loi marshalling, hoac du lieu bi hong), ham
-    // RtlInitUnicodeString goi trong SmePlanAvMfIsUnderProtectedFolder se QUET
-    // KHONG GIOI HAN tim NUL (khac RtlStringCchCopyNW da dung o cho khac,
-    // RtlInitUnicodeString khong nhan tham so gioi han) — voi phan tu CUOI
-    // CUNG trong mang ProtectedFolders, quet nay se DOC VUOT QUA het mang
-    // vao vung nho kernel ke tiep (ProtectedFoldersLock roi xa hon), co the
-    // gay BSOD. Sua: kiem tra NUL-terminator TRONG BIEN mang cho TUNG phan
-    // tu se duoc copy, ngay tai choke point nhan thong diep nay, truoc khi
-    // dua vao gContext — tu choi toan bo push neu bat ky phan tu nao thieu
-    // NUL hop le.
+    //
+    // [SUA LOI NGHIEM TRONG — 3 LOI CHONG NHAU O CUNG MOT CHO]
+    // TRUOC DAY doan nay lam viec TRUC TIEP tren InputBuffer, la bo nho
+    // USER-MODE do tien trinh goi FilterSendMessage cung cap:
+    //
+    //  (1) KHONG ProbeForRead, KHONG __try/__except. Mot con tro khong hop
+    //      le, hoac mot vung nho bi unmap giua chung boi mot thread khac
+    //      cua chinh tien trinh do, la BUGCHECK ngay — tu user-mode, khong
+    //      can dac quyen gi.
+    //  (2) DOUBLE-FETCH: vong kiem NUL doc mang Folders mot lan, roi
+    //      RtlCopyMemory doc LAI chinh vung do lan thu hai. Mot thread khac
+    //      cua tien trinh goi chi can doi noi dung GIUA hai lan doc la
+    //      vuot qua duoc kiem tra NUL va van tuon vao gContext mot chuoi
+    //      khong ket thuc — dung lai lo hong ma chinh vong kiem do duoc
+    //      viet ra de chan.
+    //  (3) RtlCopyMemory 8320 byte tu bo nho PAGEABLE user-mode TRONG KHI
+    //      dang giu spinlock (tuc la o DISPATCH_LEVEL). Mot page fault o
+    //      DISPATCH_LEVEL la IRQL_NOT_LESS_OR_EQUAL — bugcheck.
+    //
+    // Ba loi nay khong the va roi tung cai mot: sua (2) can chup mot ban
+    // sao, sua (3) cung can chup mot ban sao, va (1) can bao ve chinh viec
+    // chup do. Nen thiet ke lai theo dung thu tu bat buoc:
+    //   B1. cap phat bo nho NONPAGED trong kernel;
+    //   B2. ProbeForRead + RtlCopyMemory trong __try/__except -> tu day tro
+    //       di KHONG BAO GIO cham vao InputBuffer nua;
+    //   B3. validate tren BAN SAO KERNEL (khong con double-fetch: khong ai
+    //       ngoai kernel sua duoc ban sao nay);
+    //   B4. giu spinlock va copy TU BAN SAO KERNEL (khong con truy cap bo
+    //       nho pageable o DISPATCH_LEVEL).
+    //
     {
-        ULONG folderIdx, nulCheckIdx;
-        BOOLEAN allHaveNul = TRUE;
-        for (folderIdx = 0; folderIdx < count && allHaveNul; folderIdx++) {
-            BOOLEAN hasNul = FALSE;
-            for (nulCheckIdx = 0; nulCheckIdx < MINIFILTER_MAX_FOLDER_PATH_CHARS; nulCheckIdx++) {
-                if (msg->Folders[folderIdx][nulCheckIdx] == L'\0') {
-                    hasNul = TRUE;
-                    break;
-                }
-            }
-            if (!hasNul) {
-                allHaveNul = FALSE;
-            }
-        }
-        if (!allHaveNul) {
+        PPUSH_SET_PROTECTED_FOLDERS_MSG kernelMsg;
+        NTSTATUS captureStatus = STATUS_SUCCESS;
+
+        if (InputBuffer == NULL || InputBufferSize < sizeof(PUSH_SET_PROTECTED_FOLDERS_MSG)) {
             return STATUS_INVALID_PARAMETER;
         }
-    }
 
-    KeAcquireSpinLock(&gContext.ProtectedFoldersLock, &oldIrql);
-    gContext.ProtectedFolderCount = count;
-    RtlCopyMemory(gContext.ProtectedFolders, msg->Folders, count * sizeof(msg->Folders[0]));
+        // B1 — NonPagedPoolNx: vung nay se duoc doc khi dang giu spinlock.
+        kernelMsg = (PPUSH_SET_PROTECTED_FOLDERS_MSG)ExAllocatePool2(
+            POOL_FLAG_NON_PAGED, sizeof(PUSH_SET_PROTECTED_FOLDERS_MSG), MINIFILTER_POOL_TAG);
+        if (kernelMsg == NULL) {
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+
+        // B2 — chup mot lan duy nhat, co bao ve.
+        __try {
+            ProbeForRead(InputBuffer, sizeof(PUSH_SET_PROTECTED_FOLDERS_MSG), __alignof(PUSH_SET_PROTECTED_FOLDERS_MSG));
+            RtlCopyMemory(kernelMsg, InputBuffer, sizeof(PUSH_SET_PROTECTED_FOLDERS_MSG));
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            captureStatus = GetExceptionCode();
+        }
+
+        if (!NT_SUCCESS(captureStatus)) {
+            ExFreePoolWithTag(kernelMsg, MINIFILTER_POOL_TAG);
+            return STATUS_INVALID_USER_BUFFER;
+        }
+
+        // B3 — tu day moi kiem tra deu tren ban sao kernel.
+        if (kernelMsg->Type != PushMsgType_SetProtectedFolders) {
+            ExFreePoolWithTag(kernelMsg, MINIFILTER_POOL_TAG);
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        count = min(kernelMsg->FolderCount, MINIFILTER_MAX_PROTECTED_FOLDERS);
+
+        // Moi phan tu se duoc copy PHAI co NUL trong bien mang, neu khong
+        // RtlInitUnicodeString (goi tu SmePlanAvMfIsUnderProtectedFolder)
+        // se quet khong gioi han qua het mang vao vung nho kernel ke tiep.
+        {
+            ULONG folderIdx, nulCheckIdx;
+            BOOLEAN allHaveNul = TRUE;
+            for (folderIdx = 0; folderIdx < count && allHaveNul; folderIdx++) {
+                BOOLEAN hasNul = FALSE;
+                for (nulCheckIdx = 0; nulCheckIdx < MINIFILTER_MAX_FOLDER_PATH_CHARS; nulCheckIdx++) {
+                    if (kernelMsg->Folders[folderIdx][nulCheckIdx] == L'\0') {
+                        hasNul = TRUE;
+                        break;
+                    }
+                }
+                if (!hasNul) {
+                    allHaveNul = FALSE;
+                }
+            }
+            if (!allHaveNul) {
+                ExFreePoolWithTag(kernelMsg, MINIFILTER_POOL_TAG);
+                return STATUS_INVALID_PARAMETER;
+            }
+        }
+
+        // B4 — copy tu ban sao KERNEL (non-paged) khi dang giu spinlock.
+        KeAcquireSpinLock(&gContext.ProtectedFoldersLock, &oldIrql);
+        gContext.ProtectedFolderCount = count;
+        RtlCopyMemory(gContext.ProtectedFolders, kernelMsg->Folders, count * sizeof(kernelMsg->Folders[0]));
+
     // [SUA LOI NGHIEM TRONG] Tang generation MOI LAN danh sach doi de cac
     // MINIFILTER_STREAM_CONTEXT da cache tu TRUOC lan cap nhat nay tu nhan
     // ra minh STALE (xem MINIFILTER_CONTEXT.ProtectedFoldersGeneration va
@@ -516,8 +793,11 @@ SmePlanAvMfMessageNotifyCallback(
     // lam moi lai sau khi danh sach bao ve thay doi" (file mo TRUOC khi
     // admin them thu muc cua no vao danh sach se khong bao gio duoc bao ve
     // cho toi khi dong/mo lai file, neu khong co co che nay).
-    InterlockedIncrement(&gContext.ProtectedFoldersGeneration);
-    KeReleaseSpinLock(&gContext.ProtectedFoldersLock, oldIrql);
+        InterlockedIncrement(&gContext.ProtectedFoldersGeneration);
+        KeReleaseSpinLock(&gContext.ProtectedFoldersLock, oldIrql);
+
+        ExFreePoolWithTag(kernelMsg, MINIFILTER_POOL_TAG);
+    }
 
     return STATUS_SUCCESS;
 }

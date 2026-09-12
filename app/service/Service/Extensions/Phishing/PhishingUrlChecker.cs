@@ -34,6 +34,20 @@ public sealed class PhishingUrlChecker
         // so sanh, dung ky thuat evasion pho bien nay khong con tac dung.
         host = host.TrimEnd('.');
 
+        // [SUA LOI NGHIEM TRONG] Uri.Host GIU NGUYEN cap ngoac vuong cho dia
+        // chi IPv6: new Uri("http://[2001:db8::1]/x").Host tra ve chuoi
+        // "[2001:db8::1]", KHONG phai "2001:db8::1" (muon dang khong ngoac
+        // phai dung DnsSafeHost/IdnHost). Ma _store.IsIpListed so sanh chuoi
+        // TUYET DOI voi gia tri trong blocklist — von duoc luu o dang tran.
+        // Ket qua: KHONG mot entry IPv6 nao trong blocklist co the khop, bat
+        // ke danh sach co bao nhieu muc. Ca nhanh chan IPv6 im lang khong
+        // hoat dong, va khong co loi nao duoc ghi ra de ai do nhan thay.
+        // TrimEnd('.') o tren cung khong dung toi ngoac vuong.
+        if (host.Length > 1 && host[0] == '[' && host[^1] == ']')
+        {
+            host = host[1..^1];
+        }
+
         if (Uri.CheckHostName(host) == UriHostNameType.IPv4 || Uri.CheckHostName(host) == UriHostNameType.IPv6)
         {
             if (_store.IsIpListed(host)) return new PhishingCheckResult(true, "ip", host);
@@ -44,13 +58,16 @@ public sealed class PhishingUrlChecker
         // khop neu danh sach chi co "evil.com") — domain phishing thuong
         // dung them subdomain ngau nhien de ne cac danh sach chi khop tuyet doi.
         var labels = host.Split('.');
+        var candidates = new List<string>(labels.Length);
         for (int i = 0; i < labels.Length - 1; i++)
         {
-            var candidate = string.Join('.', labels[i..]);
-            if (_store.IsDomainListed(candidate))
-            {
-                return new PhishingCheckResult(true, "domain", candidate);
-            }
+            candidates.Add(string.Join('.', labels[i..]));
+        }
+
+        var matched = _store.FindMostSpecificListedDomain(candidates);
+        if (matched is not null)
+        {
+            return new PhishingCheckResult(true, "domain", matched);
         }
 
         return new PhishingCheckResult(false, null, null);

@@ -30,40 +30,73 @@ public sealed class ApiTokenProvider
     {
         TokenFilePath = tokenFilePath ?? Path.Combine(DataPaths.DataDir, "api-token.txt");
 
-        // [UX FIX] Truoc day sinh token MOI moi lan service khoi dong lai —
-        // dung nhu Jupyter, nhung gay phien khi dang phat trien/vá loi:
-        // moi lan restart service de test, URL/tab trinh duyet nguoi dung
-        // dang mo (kem token cu) lap tuc thanh vo hieu, hien 401 kho hieu.
-        // Giu nguyen token qua cac lan restart (chi doi khi file bi xoa
-        // thu cong, hoac chua tung ton tai) — van dam bao token la bi mat
-        // ngau nhien, chi khac o cho no ON DINH giua cac lan chay, giong
-        // nhieu local dev server khac (vi du VS Code Server) hay lam.
-        if (File.Exists(TokenFilePath))
-        {
-            var existing = File.ReadAllText(TokenFilePath).Trim();
-            Token = existing.Length > 0 ? existing : GenerateToken();
-        }
-        else
-        {
-            Token = GenerateToken();
-        }
-
-        File.WriteAllText(TokenFilePath, Token);
-
+        // [SUA LOI CAO — THU TU BAT BUOC] ACL PHAI duoc ap dung TRUOC khi
+        // token cham vao dia. TRUOC DAY thu tu nguoc lai: File.WriteAllText
+        // ghi token ra dia roi MOI goi ProtectDataDirectory — trong cua so
+        // giua hai lenh do, file bi mat gac toan bo /api/* nam trong mot thu
+        // muc con ke thua ACL cua ProgramData (Users co quyen ghi). Va neu
+        // ACL that bai thi catch {} nuot im lang, khong ai biet token dang
+        // nam tho.
+        var tokenDir = Path.GetDirectoryName(TokenFilePath);
+        AclFailure = null;
         try
         {
-            // Bao ve thu muc CHUA token file thuc su (khong luon la
-            // DataPaths.DataDir — khi test truyen tokenFilePath rieng, day
-            // se la thu muc tam cua test, khong dung cham vao ProgramData that).
-            var tokenDir = Path.GetDirectoryName(TokenFilePath);
-            if (!string.IsNullOrEmpty(tokenDir)) AclProtection.ProtectDataDirectory(tokenDir);
+            if (!string.IsNullOrEmpty(tokenDir))
+            {
+                Directory.CreateDirectory(tokenDir);
+                AclProtection.ProtectDataDirectory(tokenDir);
+            }
         }
-        catch
+        catch (Exception ex)
         {
-            // Han che moi truong da biet (khong chay quyen SYSTEM/Administrator) —
-            // van tiep tuc chay, token van co hieu luc chan tan cong "goi API vo tu",
-            // chi la ACL tren file token chua duoc tang cuong them tren may dev nay.
+            // KHONG nuot im lang nua: ghi lai de Program.cs bao dong ro rang.
+            // Van tiep tuc chay (tren may dev khong elevate day la binh
+            // thuong) nhung su viec phai hien ra, khong duoc bien mat.
+            AclFailure = ex;
         }
+
+        // [SUA LOI CAO — TOKEN FIXATION] TRUOC DAY code doc file token co
+        // san va TIN NOI DUNG cua no vo dieu kien. Ke tan cong ghi truoc mot
+        // file api-token.txt voi gia tri ho tu chon (de dang: thu muc chua
+        // duoc ACL o lan khoi dong dau tien, xem thu tu sai o tren) la HO
+        // BIET TOKEN — va service se dung dung token do lam bi mat xac thuc.
+        // Do la token fixation kinh dien.
+        //
+        // Sua: chi tai su dung token cu khi no CO DINH DANG DUNG bang token
+        // do chinh ta sinh ra (43 ky tu base64url tu 32 byte ngau nhien).
+        // Gia tri sai dinh dang bi vut bo va thay bang token moi. Dieu nay
+        // khong chan duoc ke tan cong ghi mot token dung dinh dang, nen
+        // lop phong thu THAT SU la ACL o tren chay TRUOC — hai lop cung nhau.
+        string? existing = null;
+        if (File.Exists(TokenFilePath))
+        {
+            try { existing = File.ReadAllText(TokenFilePath).Trim(); }
+            catch { existing = null; }
+        }
+
+        Token = IsWellFormedToken(existing) ? existing! : GenerateToken();
+
+        File.WriteAllText(TokenFilePath, Token);
+        try { AclProtection.ProtectFile(TokenFilePath); }
+        catch (Exception ex) { AclFailure ??= ex; }
+    }
+
+    // Loi ACL (neu co) gap luc khoi tao — Program.cs doc de bao dong. null
+    // nghia la thu muc/file token da duoc bao ve dung.
+    public Exception? AclFailure { get; }
+
+    // Token do GenerateToken() sinh ra luon la 32 byte ngau nhien ma hoa
+    // base64url khong padding = dung 43 ky tu trong bang chu cai base64url.
+    private static bool IsWellFormedToken(string? candidate)
+    {
+        if (string.IsNullOrEmpty(candidate) || candidate.Length != 43) return false;
+        foreach (char c in candidate)
+        {
+            bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+                   || (c >= '0' && c <= '9') || c == '-' || c == '_';
+            if (!ok) return false;
+        }
+        return true;
     }
 
     private static string GenerateToken()

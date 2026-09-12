@@ -41,6 +41,56 @@ public sealed class ProcessTrustEngine
         _userDecisionTimeout = userDecisionTimeout ?? TimeSpan.FromSeconds(30);
     }
 
+    // [SUA LOI NGHIEM TRONG] TrustedDirectories chua NGUYEN %WINDIR%, nhung
+    // ben trong %WINDIR% co nhieu thu muc ma NGUOI DUNG THUONG GHI DUOC theo
+    // ACL mac dinh cua Windows — C:\Windows\Tasks va C:\Windows\Temp la hai
+    // vi du kinh dien. "Nam trong thu muc duoc WRP bao ve" vi vay KHONG con
+    // dung cho nhung duong dan do: ke tan cong quyen thuong tha binary vao
+    // C:\Windows\Tasks la thoa mot trong ba tieu chi trusted-by-default ma
+    // khong can quyen gi them. Ket hop voi mot cert tu ky mang
+    // "CN=Microsoft Corporation" duoc cai vao LocalMachine\Root, du ca ba
+    // tieu chi — thanh mot chuoi leo thang len SYSTEM hoan chinh.
+    //
+    // Sua: giu danh sach tin cay nhung LOAI TRU tuong minh cac thu muc con
+    // ghi duoc. Danh sach loai tru duoc kiem tra TRUOC, va bang cung
+    // IsPathUnderDirectory (da resolve reparse point) nen khong the vong
+    // qua bang junction.
+    private static readonly string[] UserWritableExclusions = BuildUserWritableExclusions();
+
+    private static string[] BuildUserWritableExclusions()
+    {
+        string win = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        if (string.IsNullOrEmpty(win)) return Array.Empty<string>();
+        // Cac thu muc duoi %WINDIR% co ACE ghi cho Users/Authenticated Users
+        // trong cau hinh mac dinh cua Windows.
+        string[] relative =
+        {
+            "Tasks",
+            "Temp",
+            "Tracing",
+            "debug",
+            @"System32\Tasks",
+            @"System32\spool\drivers\color",
+            @"System32\Microsoft\Crypto\RSA\MachineKeys",
+            @"SysWOW64\Tasks",
+            @"registration\CRMLog",
+            @"System32\com\dmp",
+            @"SysWOW64\com\dmp",
+        };
+        return relative.Select(r => Path.Combine(win, r)).ToArray();
+    }
+
+    private static bool IsInTrustedDirectory(string processPath)
+    {
+        bool inTrusted = TrustedDirectories.Where(d => !string.IsNullOrEmpty(d))
+            .Any(d => Antivirus.Service.Common.PathUtil.IsPathUnderDirectory(processPath, d));
+        if (!inTrusted) return false;
+
+        bool inWritableHole = UserWritableExclusions
+            .Any(d => Antivirus.Service.Common.PathUtil.IsPathUnderDirectory(processPath, d));
+        return !inWritableHole;
+    }
+
     public async Task<ProcessTrustDecision> EvaluateAsync(string processPath, int pid, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
@@ -58,8 +108,25 @@ public sealed class ProcessTrustEngine
         // khi mang cham/proxy chan.
         var authenticode = await AuthenticodeVerifier.VerifyAsync(processPath, TimeSpan.FromSeconds(5), ct);
         bool isMicrosoftPublisher = AuthenticodeVerifier.IsMicrosoftPublisher(authenticode.PublisherName);
-        bool inTrustedDirectory = TrustedDirectories.Where(d => !string.IsNullOrEmpty(d))
-            .Any(d => Antivirus.Service.Common.PathUtil.IsPathUnderDirectory(processPath, d));
+        bool inTrustedDirectory = IsInTrustedDirectory(processPath);
+
+        // [SUA LOI CAO] TRUOC DAY nhanh TrustedByDefault ben duoi chay TRUOC
+        // moi lan tra rule. Hau qua: mot rule Block do NGUOI DUNG tu dat cho
+        // mot binary Microsoft trong \Windows\System32 bi bo qua hoan toan —
+        // dung nhung binary ma nguoi dung co ly do chinh dang muon chan
+        // (powershell.exe, certutil.exe, mshta.exe, wmic.exe... — bo LOLBin
+        // kinh dien duoc dung de "living off the land"). Rule hien ra trong
+        // UI nhu the dang co hieu luc, nhung khong bao gio duoc doi chieu.
+        //
+        // Chinh sach TUONG MINH cua nguoi dung phai thang mac dinh cua he
+        // thong. Tra rule Block TRUOC; cac nhanh con lai (Allow theo rule,
+        // publisher, hoi nguoi dung) van giu nguyen thu tu cu ben duoi.
+        var explicitBlock = string.IsNullOrEmpty(sha256) ? null : _rules.FindByHash(sha256);
+        if (explicitBlock is not null && explicitBlock.Action == RuleAction.Block)
+        {
+            return Finish(sw, processPath, pid, sha256, authenticode, ProcessTrustState.RuleBlock, false,
+                $"Khop rule CHAN tuong minh theo hash (id={explicitBlock.Id}) — rule nguoi dung uu tien hon trusted-by-default");
+        }
 
         // Unknown -> TrustedByDefault: ca 3 tieu chi phai dung DONG THOI
         // (khong tach roi) — SEC-01/domain invariant.
@@ -94,9 +161,43 @@ public sealed class ProcessTrustEngine
             if (ruleByPub is not null)
             {
                 bool allow = ruleByPub.Action == RuleAction.Allow;
-                return Finish(sw, processPath, pid, sha256, authenticode,
-                    allow ? ProcessTrustState.RuleAllow : ProcessTrustState.RuleBlock, allow,
-                    $"Khop rule theo publisher (id={ruleByPub.Id}, action={ruleByPub.Action})");
+
+                // [SUA LOI NGHIEM TRONG — GUARD DUNG, TRUOC DAY AP THIEU DUONG]
+                // Nhanh trusted-by-default o tren doi authenticode.ChainValid
+                // truoc khi tin vao publisher. Nhanh nay thi khong — va do la
+                // mot duong vong qua danh sach cho phep.
+                //
+                // AuthenticodeVerifier.Verify lay thumbprint bang
+                // X509Certificate.CreateFromSignedFile, ham nay chi DOC
+                // certificate nhung trong khoi chu ky cua file PE, KHONG xac
+                // thuc gi ca (viec xac thuc do WinVerifyTrust lam rieng, va
+                // ket qua nam o ChainValid). Nghia la thumbprint van duoc dien
+                // day du ngay ca khi chu ky HONG hoan toan.
+                // Ke tan cong chi can lay certificate cong khai cua mot nha
+                // phat hanh ma nguoi dung da tung bam "Cho phep luon" (cert
+                // cong khai — ai cung lay duoc tu bat ky nhi phan da ky nao
+                // cua ho), nhet vao khoi chu ky cua file doc hai cua minh, va
+                // rule allow-by-publisher se khop. Khong can khoa riêng, khong
+                // can pha vo mat ma gi ca.
+                //
+                // Sua: chi cho phep theo publisher khi chuoi chung thu THAT SU
+                // hop le. Huong CHAN thi giu nguyen bat ke ChainValid — mot
+                // rule chan van phai chan, chu ky hong khong duoc thanh duong
+                // thoat khoi lenh cam.
+                if (allow && !authenticode.ChainValid)
+                {
+                    _audit.Log("process-trust",
+                        $"KHONG ap dung rule cho-phep theo publisher cho {processPath}: chuoi chung thu " +
+                        "KHONG hop le (thumbprint doc duoc tu khoi chu ky khong dam bao chu ky dung) — " +
+                        "chuyen sang hoi nguoi dung",
+                        new { pid, ruleId = ruleByPub.Id, thumbprint = authenticode.PublisherThumbprint });
+                }
+                else
+                {
+                    return Finish(sw, processPath, pid, sha256, authenticode,
+                        allow ? ProcessTrustState.RuleAllow : ProcessTrustState.RuleBlock, allow,
+                        $"Khop rule theo publisher (id={ruleByPub.Id}, action={ruleByPub.Action})");
+                }
             }
         }
 
@@ -145,7 +246,11 @@ public sealed class ProcessTrustEngine
                     return Finish(sw, processPath, pid, sha256, authenticode, ProcessTrustState.AllowedAlways, true,
                         "Nguoi dung chon 'Cho phep luon' — da luu rule vinh vien theo scope=hash");
                 }
-                if (authenticode.PublisherThumbprint is not null)
+                // Cung ly do nhu guard ChainValid o nhanh tra cuu rule theo
+                // publisher ben tren: mot thumbprint doc duoc tu khoi chu ky
+                // HONG khong dinh danh duoc ai ca. Luu no thanh rule cho-phep
+                // vinh vien la ghi thang mot duong vong vao CSDL chinh sach.
+                if (authenticode.PublisherThumbprint is not null && authenticode.ChainValid)
                 {
                     _rules.Add(new AppRule
                     {
@@ -161,7 +266,7 @@ public sealed class ProcessTrustEngine
                         "Khong hash duoc file nhung co publisher hop le — da luu rule vinh vien theo scope=publisher thay vi hash rong");
                 }
                 return Finish(sw, processPath, pid, sha256, authenticode, ProcessTrustState.AllowedOnce, true,
-                    "Khong hash duoc file va khong co publisher — TU CHOI luu rule vinh vien (tranh rule voi hash rong bi loi dung), ha xuong 'chi lan nay'");
+                    "Khong hash duoc file va khong co publisher voi chuoi chung thu hop le — TU CHOI luu rule vinh vien (tranh rule voi hash rong / thumbprint tu chu ky hong bi loi dung), ha xuong 'chi lan nay'");
 
             case UserPermissionChoice.AllowOnce:
                 return Finish(sw, processPath, pid, sha256, authenticode, ProcessTrustState.AllowedOnce, true,
@@ -201,6 +306,7 @@ public sealed class ProcessTrustEngine
             PublisherName = auth?.PublisherName,
             State = state,
             Allowed = allowed,
+            ChainVerificationCompleted = auth?.ChainVerificationCompleted ?? true,
             Reason = reason,
             ElapsedMs = sw.ElapsedMilliseconds,
         };

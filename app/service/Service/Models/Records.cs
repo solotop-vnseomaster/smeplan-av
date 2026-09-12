@@ -48,6 +48,15 @@ public sealed class ProcessTrustDecision
     public string? PublisherName { get; set; }
     public ProcessTrustState State { get; set; }
     public bool Allowed { get; set; }
+
+    // [SUA LOI NGHIEM TRONG] Xem AuthenticodeResult.ChainVerificationCompleted.
+    // false nghia la "chua ket luan duoc ve chuoi chung thu" (thuong la het
+    // thoi gian cho WinVerifyTrust khi CRL/OCSP bi chan), KHAC voi "da ket
+    // luan la khong hop le". Cac hanh dong KHONG HOAN TAC DUOC (Kill() tien
+    // trinh) PHAI kiem tra co nay truoc khi hanh dong tren mot ket qua
+    // Allowed = false.
+    public bool ChainVerificationCompleted { get; set; } = true;
+
     public required string Reason { get; set; }
     public long ElapsedMs { get; set; }
 }

@@ -1,0 +1,698 @@
+<title>SMEPlan AV</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;800&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+  :root {
+    /* Ground + ink: xanh-den thay vi den thuan, giay lanh thay vi trang thuan */
+    --ground: #F6F7F9;
+    --surface: #FFFFFF;
+    --surface-sunk: #EEF1F5;
+    --ink: #12171F;
+    --ink-soft: #39424F;
+    --muted: #5C6675;
+    --line: #DCE1E8;
+    --line-strong: #C3CBD6;
+
+    /* Mot mau nhan duy nhat: xanh thep */
+    --accent: #1F5F9E;
+    --accent-soft: #E7EFF7;
+
+    /* Mau ngu nghia — CHI dung cho chip trang thai, khong trang tri */
+    --ok: #156B43;
+    --ok-bg: #E3F2EA;
+    --warn: #8A5A00;
+    --warn-bg: #FAF0DC;
+    --off: #6B7280;
+    --off-bg: #ECEEF1;
+
+    --measure: 66ch;
+    --radius: 3px;
+  }
+
+  :root:not([data-theme="light"]) {
+    color-scheme: light;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --ground: #0D1219;
+      --surface: #141B25;
+      --surface-sunk: #101822;
+      --ink: #E8ECF2;
+      --ink-soft: #C3CBD6;
+      --muted: #8D99A9;
+      --line: #232E3C;
+      --line-strong: #33404F;
+      --accent: #6FAEE8;
+      --accent-soft: #16283A;
+      --ok: #5CC38C;
+      --ok-bg: #12261C;
+      --warn: #D9A441;
+      --warn-bg: #2A2113;
+      --off: #8790A0;
+      --off-bg: #1A212B;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --ground: #0D1219;
+    --surface: #141B25;
+    --surface-sunk: #101822;
+    --ink: #E8ECF2;
+    --ink-soft: #C3CBD6;
+    --muted: #8D99A9;
+    --line: #232E3C;
+    --line-strong: #33404F;
+    --accent: #6FAEE8;
+    --accent-soft: #16283A;
+    --ok: #5CC38C;
+    --ok-bg: #12261C;
+    --warn: #D9A441;
+    --warn-bg: #2A2113;
+    --off: #8790A0;
+    --off-bg: #1A212B;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "Source Serif 4", Georgia, "Times New Roman", serif;
+    font-size: 17px;
+    line-height: 1.65;
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 0 28px 96px;
+  }
+
+  h1, h2, h3, .ui {
+    font-family: "Be Vietnam Pro", "Segoe UI", system-ui, sans-serif;
+  }
+
+  .mono {
+    font-family: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- Masthead ---------- */
+  .masthead {
+    border-bottom: 2px solid var(--ink);
+    padding: 56px 0 26px;
+    display: grid;
+    gap: 18px;
+  }
+
+  .eyebrow {
+    font-family: "Be Vietnam Pro", system-ui, sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  h1 {
+    font-size: clamp(2.6rem, 6vw, 4.1rem);
+    font-weight: 800;
+    line-height: 1.02;
+    letter-spacing: -0.03em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  h1 .dim { color: var(--muted); font-weight: 600; }
+
+  .standfirst {
+    max-width: var(--measure);
+    font-size: 1.14rem;
+    color: var(--ink-soft);
+    margin: 0;
+  }
+
+  /* ---------- Metrics band ---------- */
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .metric {
+    padding: 24px 20px 24px 0;
+    border-right: 1px solid var(--line);
+  }
+  .metric:last-child { border-right: 0; }
+
+  .metric b {
+    display: block;
+    font-family: "Be Vietnam Pro", system-ui, sans-serif;
+    font-size: 2.05rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .metric span {
+    display: block;
+    margin-top: 4px;
+    font-family: "Be Vietnam Pro", system-ui, sans-serif;
+    font-size: 12.5px;
+    color: var(--muted);
+    line-height: 1.45;
+  }
+
+  /* ---------- Sections ---------- */
+  section { padding-top: 58px; }
+
+  h2 {
+    font-size: 1.55rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    margin: 0 0 6px;
+    text-wrap: balance;
+  }
+
+  .section-note {
+    max-width: var(--measure);
+    color: var(--muted);
+    margin: 0 0 26px;
+    font-size: 1.02rem;
+  }
+
+  h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 6px;
+    letter-spacing: -0.01em;
+  }
+
+  p { margin: 0 0 14px; max-width: var(--measure); }
+
+  a { color: var(--accent); }
+
+  /* ---------- Status chips (ngon ngu cua chinh san pham) ---------- */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: "Be Vietnam Pro", system-ui, sans-serif;
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    padding: 3px 9px;
+    border-radius: 100px;
+    white-space: nowrap;
+  }
+  .chip::before {
+    content: "";
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    flex: none;
+  }
+  .chip-ok   { color: var(--ok);   background: var(--ok-bg); }
+  .chip-warn { color: var(--warn); background: var(--warn-bg); }
+  .chip-off  { color: var(--off);  background: var(--off-bg); }
+
+  /* ---------- Architecture stack ---------- */
+  .stack { display: grid; gap: 10px; }
+
+  .layer {
+    display: grid;
+    grid-template-columns: 44px 1fr auto;
+    gap: 18px;
+    align-items: start;
+    padding: 16px 18px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    border-radius: var(--radius);
+  }
+  .layer[data-state="ok"]   { border-left-color: var(--ok); }
+  .layer[data-state="warn"] { border-left-color: var(--warn); }
+  .layer[data-state="off"]  { border-left-color: var(--line-strong); }
+
+  .layer-ring {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    color: var(--muted);
+    padding-top: 3px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .layer-body p {
+    margin: 0;
+    font-size: 0.95rem;
+    color: var(--ink-soft);
+    max-width: 62ch;
+  }
+
+  .layer-tech {
+    margin: 8px 0 0;
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+
+  /* ---------- Two-column prose grid ---------- */
+  .cols {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+    gap: 30px 40px;
+  }
+
+  .block h3 { margin-bottom: 4px; }
+  .block p { font-size: 0.96rem; color: var(--ink-soft); margin-bottom: 0; }
+
+  /* ---------- Verification list ---------- */
+  .verified {
+    display: grid;
+    gap: 0;
+    border-top: 1px solid var(--line);
+  }
+
+  .vrow {
+    display: grid;
+    grid-template-columns: 1fr minmax(180px, 0.75fr);
+    gap: 16px 28px;
+    padding: 15px 0;
+    border-bottom: 1px solid var(--line);
+    align-items: baseline;
+  }
+
+  .vrow > div:first-child {
+    font-family: "Be Vietnam Pro", system-ui, sans-serif;
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
+
+  .vrow > div:last-child {
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  .vrow .mono { color: var(--ink-soft); }
+
+  /* ---------- Scope callout ---------- */
+  .scope {
+    background: var(--surface-sunk);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 26px 28px;
+  }
+
+  .scope ul {
+    margin: 0;
+    padding-left: 0;
+    list-style: none;
+    display: grid;
+    gap: 16px;
+  }
+
+  .scope li {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 14px;
+    align-items: start;
+    font-size: 0.95rem;
+    color: var(--ink-soft);
+  }
+
+  .scope li b {
+    font-family: "Be Vietnam Pro", system-ui, sans-serif;
+    color: var(--ink);
+    font-weight: 600;
+  }
+
+  /* ---------- Stack table ---------- */
+  .tablewrap { overflow-x: auto; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.93rem;
+  }
+
+  th, td {
+    text-align: left;
+    padding: 11px 16px 11px 0;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+
+  th {
+    font-family: "Be Vietnam Pro", system-ui, sans-serif;
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-bottom-color: var(--line-strong);
+    white-space: nowrap;
+  }
+
+  td:first-child {
+    font-family: "Be Vietnam Pro", system-ui, sans-serif;
+    font-weight: 600;
+    white-space: nowrap;
+    padding-right: 32px;
+  }
+
+  /* ---------- Footer ---------- */
+  footer {
+    margin-top: 72px;
+    padding-top: 22px;
+    border-top: 2px solid var(--ink);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 32px;
+    justify-content: space-between;
+    align-items: baseline;
+    font-family: "Be Vietnam Pro", system-ui, sans-serif;
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+
+  @media (max-width: 620px) {
+    .layer { grid-template-columns: 1fr; gap: 10px; }
+    .layer-ring { padding-top: 0; }
+    .vrow { grid-template-columns: 1fr; gap: 4px; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">Hồ sơ năng lực kỹ thuật</div>
+    <h1>SMEPlan AV<br><span class="dim">Phần mềm chống mã độc cho Windows</span></h1>
+    <p class="standfirst">
+      Một sản phẩm bảo mật điểm cuối được xây dựng trọn vẹn từ engine quét C++ ở tầng thấp
+      cho tới trình cài đặt MSI — sáu tầng phòng thủ, dịch vụ nền chạy quyền
+      <span class="mono">LocalSystem</span>, và kênh cập nhật cơ sở dữ liệu chữ ký có ký số.
+    </p>
+  </header>
+
+  <div class="metrics">
+    <div class="metric"><b>147</b><span>file mã nguồn<br>~27.150 dòng</span></div>
+    <div class="metric"><b>5</b><span>ngôn ngữ<br>C#, C++, C, JS, PowerShell</span></div>
+    <div class="metric"><b>336</b><span>ca kiểm thử tự động<br>335 đạt · 1 bỏ qua</span></div>
+    <div class="metric"><b>60</b><span>điểm cuối HTTP<br>API nội bộ loopback</span></div>
+    <div class="metric"><b>15</b><span>dịch vụ nền<br>chạy song song</span></div>
+  </div>
+
+  <section>
+    <h2>Kiến trúc sáu tầng</h2>
+    <p class="section-note">
+      Mỗi tầng mang đúng chip trạng thái mà sản phẩm tự báo cáo về chính nó —
+      cùng ngôn ngữ hiển thị trên bảng điều khiển của người dùng.
+    </p>
+
+    <div class="stack">
+
+      <div class="layer" data-state="ok">
+        <div class="layer-ring mono">01</div>
+        <div class="layer-body">
+          <h3>Giao diện điều khiển</h3>
+          <p>
+            Vỏ WPF nhúng WebView2, hiển thị bảng điều khiển HTML do chính dịch vụ phục vụ.
+            Giao diện không chứa logic phát hiện — mọi quyết định nằm ở tầng dịch vụ, đúng
+            nguyên tắc tách biệt trách nhiệm.
+          </p>
+          <p class="layer-tech mono">WPF · WebView2 · vanilla JS · xác thực bằng token</p>
+        </div>
+        <span class="chip chip-ok">Hoạt động</span>
+      </div>
+
+      <div class="layer" data-state="ok">
+        <div class="layer-ring mono">02</div>
+        <div class="layer-body">
+          <h3>Dịch vụ nền</h3>
+          <p>
+            Windows Service chạy quyền <span class="mono">LocalSystem</span>, tự khởi động
+            cùng hệ điều hành. Điều phối 15 dịch vụ chạy song song: giám sát thư mục tải về,
+            chống ransomware, theo dõi USB, kiểm tra webcam/micro, quét lỗ hổng phần mềm,
+            giám sát kết nối mạng.
+          </p>
+          <p class="layer-tech mono">.NET 9 · ASP.NET Core Kestrel · SQLite · 60 endpoint</p>
+        </div>
+        <span class="chip chip-ok">Hoạt động</span>
+      </div>
+
+      <div class="layer" data-state="ok">
+        <div class="layer-ring mono">03</div>
+        <div class="layer-body">
+          <h3>Engine quét</h3>
+          <p>
+            Thư viện C++ gọi qua P/Invoke, dùng chung cho cả quét toàn ổ lẫn quét thời gian thực.
+            Ba tầng phát hiện nối tiếp: đối chiếu hash, luật YARA, rồi chấm điểm heuristic trên
+            cấu trúc tệp PE — entropy, bảng import, vị trí điểm vào.
+          </p>
+          <p class="layer-tech mono">C++17 · SHA-256 tự cài đặt · bloom filter · YARA</p>
+        </div>
+        <span class="chip chip-ok">Hoạt động</span>
+      </div>
+
+      <div class="layer" data-state="ok">
+        <div class="layer-ring mono">04</div>
+        <div class="layer-body">
+          <h3>Cơ sở dữ liệu chữ ký</h3>
+          <p>
+            Mảng bản ghi đã sắp xếp, ánh xạ bộ nhớ trực tiếp từ đĩa, tra cứu bằng tìm kiếm nhị phân.
+            Một bloom filter trong RAM chặn trước phần lớn truy vấn không khớp. Hoán đổi cơ sở dữ
+            liệu lúc đang chạy là thao tác nguyên tử, có sao lưu và quay lui.
+          </p>
+          <p class="layer-tech mono">memory-mapped · binary search O(log n) · hoán đổi nguyên tử</p>
+        </div>
+        <span class="chip chip-ok">Hoạt động</span>
+      </div>
+
+      <div class="layer" data-state="warn">
+        <div class="layer-ring mono">05</div>
+        <div class="layer-body">
+          <h3>Tường lửa tầng ứng dụng</h3>
+          <p>
+            Luật theo ứng dụng được lưu trữ và đối chiếu với mọi kết nối đang mở, có ghi nhật ký
+            kiểm toán và phát hiện mẫu kết nối đều đặn nghi là beacon điều khiển từ xa.
+            Việc <em>chặn</em> ở tầng mạng cần driver WFP kernel-mode.
+          </p>
+          <p class="layer-tech mono">iphelper API · IPv4 + IPv6 · phát hiện beacon C2</p>
+        </div>
+        <span class="chip chip-warn">Phát hiện, chưa chặn</span>
+      </div>
+
+      <div class="layer" data-state="off">
+        <div class="layer-ring mono">06</div>
+        <div class="layer-body">
+          <h3>Driver kernel-mode</h3>
+          <p>
+            Mã nguồn C cho minifilter (Filter Manager), ELAM và WFP callout đã được viết đầy đủ:
+            chặn <span class="mono">IRP_MJ_CREATE</span>, cổng giao tiếp với dịch vụ, bảo vệ
+            chống process hollowing. Nạp được driver cần bộ WDK và chứng thư EV có chữ ký
+            attestation của Microsoft.
+          </p>
+          <p class="layer-tech mono">C · Filter Manager · WFP callout · ObRegisterCallbacks</p>
+        </div>
+        <span class="chip chip-off">Chưa triển khai</span>
+      </div>
+
+    </div>
+  </section>
+
+  <section>
+    <h2>Kỹ thuật bảo mật đã áp dụng</h2>
+    <p class="section-note">
+      Sản phẩm bảo mật bị tấn công vào chính nó trước tiên. Những lớp dưới đây bảo vệ
+      bản thân phần mềm, không phải người dùng.
+    </p>
+
+    <div class="cols">
+      <div class="block">
+        <h3>Khoá ACL thư mục dữ liệu</h3>
+        <p>
+          Cây dữ liệu được tạo và khoá ngay lúc cài đặt, trước khi dịch vụ chạy lần đầu.
+          Quy trình gỡ mọi ACE kế thừa <em>và</em> ACE explicit có sẵn rồi dựng lại DACL từ đầu —
+          nếu chỉ ngắt kế thừa, một tệp do kẻ tấn công tạo trước vẫn giữ nguyên quyền của họ.
+        </p>
+      </div>
+      <div class="block">
+        <h3>Xác thực API cục bộ</h3>
+        <p>
+          Toàn bộ API nghe trên loopback và yêu cầu token 32 byte ngẫu nhiên. Không có token,
+          mọi tiến trình trên máy đều có thể tự thêm luật cho phép hoặc khôi phục tệp đã cách ly.
+          Tệp token được khoá riêng ở mức tệp, không dựa vào quyền kế thừa từ thư mục cha.
+        </p>
+      </div>
+      <div class="block">
+        <h3>Kênh cập nhật có ký số</h3>
+        <p>
+          Mỗi gói cơ sở dữ liệu được ký RSA-SHA256 bằng chứng thư của tổ chức và xác minh trước
+          khi áp dụng. Khoá riêng nằm trong tệp PFX khoá ACL; mật khẩu không bao giờ xuất hiện
+          trong mã nguồn.
+        </p>
+      </div>
+      <div class="block">
+        <h3>Nguyên tắc fail-closed</h3>
+        <p>
+          Khi engine chưa sẵn sàng hoặc đang hoán đổi cơ sở dữ liệu, kết quả quét là
+          <span class="mono">ScanError</span> chứ không phải <span class="mono">Clean</span>.
+          Một tệp chưa được kiểm tra không bao giờ được báo là sạch.
+        </p>
+      </div>
+      <div class="block">
+        <h3>Trạng thái bảo vệ trung thực</h3>
+        <p>
+          Một nguồn sự thật duy nhất tính toán tình trạng từng tầng và phân biệt rõ
+          <em>tầng không chạy</em> với <em>tầng không tự cập nhật được</em>. Giao diện đọc trực tiếp
+          từ đó, nên không thể hiển thị màu xanh khi hệ thống đang suy giảm.
+        </p>
+      </div>
+      <div class="block">
+        <h3>Chống thao túng đường dẫn</h3>
+        <p>
+          Mọi thao tác tệp chạy quyền SYSTEM đều kiểm tra lại đường dẫn ngay trước khi hành động:
+          từ chối UNC, reparse point và junction. Đây là lớp chặn kỹ thuật TOCTOU biến dịch vụ
+          đặc quyền thành công cụ xoá tệp tuỳ ý.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Đã kiểm chứng đầu–cuối</h2>
+    <p class="section-note">
+      Không phải kết quả tự báo cáo. Từng mục dưới đây được đo trên máy thật sau khi cài đặt
+      bằng chính trình cài đặt của sản phẩm.
+    </p>
+
+    <div class="verified">
+      <div class="vrow">
+        <div>Phát hiện mã độc thời gian thực</div>
+        <div>Tệp thử EICAR thả vào thư mục tải về — cách ly trong <span class="mono">&lt; 10 giây</span></div>
+      </div>
+      <div class="vrow">
+        <div>Kênh cập nhật cơ sở dữ liệu</div>
+        <div>Gói ký RSA-SHA256 được xác minh và áp dụng — <span class="mono">v0 → v50</span></div>
+      </div>
+      <div class="vrow">
+        <div>Trình cài đặt</div>
+        <div>MSI <span class="mono">2,1 MB</span> + bootstrapper EXE <span class="mono">2,8 MB</span>, tự yêu cầu quyền quản trị</div>
+      </div>
+      <div class="vrow">
+        <div>Đăng ký dịch vụ hệ thống</div>
+        <div>Chạy <span class="mono">LocalSystem</span>, khởi động cùng Windows, có chính sách tự khôi phục</div>
+      </div>
+      <div class="vrow">
+        <div>Khoá ACL tệp bí mật</div>
+        <div>Đọc từ tài khoản không đặc quyền trả về <span class="mono">Access denied</span></div>
+      </div>
+      <div class="vrow">
+        <div>Bộ kiểm thử tự động</div>
+        <div><span class="mono">335 / 336</span> ca đạt, mỗi ca hồi quy được chứng minh đỏ khi hoàn tác bản vá</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Phạm vi và giới hạn</h2>
+    <p class="section-note">
+      Nêu rõ ở đây vì chính sản phẩm cũng nêu rõ trên bảng điều khiển của nó.
+    </p>
+
+    <div class="scope">
+      <ul>
+        <li>
+          <span class="chip chip-off">Chưa triển khai</span>
+          <div>
+            <b>Driver kernel-mode.</b> Mã nguồn hoàn chỉnh nhưng chưa biên dịch và ký được:
+            cần bộ WDK cùng chứng thư EV có chữ ký attestation của Microsoft. Hệ quả là việc
+            chặn tiến trình diễn ra <em>sau</em> khi tiến trình đã khởi tạo, chứ không phải trước.
+          </div>
+        </li>
+        <li>
+          <span class="chip chip-warn">Phát hiện, chưa chặn</span>
+          <div>
+            <b>Thực thi tường lửa.</b> Luật được lưu, đối chiếu và ghi nhật ký, nhưng kết nối
+            khớp luật chặn vẫn chạy. Cần driver WFP callout ở tầng 06.
+          </div>
+        </li>
+        <li>
+          <span class="chip chip-warn">Cần dữ liệu thật</span>
+          <div>
+            <b>Cơ sở dữ liệu chữ ký.</b> Hạ tầng cập nhật đã chạy thông đầu–cuối, nhưng dữ liệu
+            hiện tại là bộ mẫu dùng để kiểm chứng đường ống. Khả năng phát hiện thực tế phụ thuộc
+            vào nguồn dữ liệu chữ ký được cấp.
+          </div>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>Nền tảng công nghệ</h2>
+    <p class="section-note">
+      Không dùng framework antivirus có sẵn. Engine quét, cơ sở dữ liệu chữ ký và định dạng
+      gói cập nhật đều được tự thiết kế.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th scope="col">Tầng</th><th scope="col">Công nghệ</th><th scope="col">Ghi chú kỹ thuật</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Engine quét</td>
+            <td class="mono">C++17, MSVC</td>
+            <td>SHA-256 tự cài đặt, bloom filter, ánh xạ bộ nhớ, ràng buộc động tới libyara</td>
+          </tr>
+          <tr>
+            <td>Dịch vụ nền</td>
+            <td class="mono">.NET 9, ASP.NET Core</td>
+            <td>Kestrel chỉ nghe loopback, SQLite chế độ WAL, P/Invoke sang engine C++</td>
+          </tr>
+          <tr>
+            <td>Giao diện</td>
+            <td class="mono">WPF, WebView2</td>
+            <td>Bảng điều khiển HTML do dịch vụ phục vụ, mọi điểm chèn HTML đều qua bộ escape</td>
+          </tr>
+          <tr>
+            <td>Driver</td>
+            <td class="mono">C, WDK</td>
+            <td>Minifilter, ELAM, WFP callout, ObRegisterCallbacks</td>
+          </tr>
+          <tr>
+            <td>Tiện ích trình duyệt</td>
+            <td class="mono">Manifest V3</td>
+            <td>Native messaging host kiểm tra URL trước khi trang tải</td>
+          </tr>
+          <tr>
+            <td>Đóng gói</td>
+            <td class="mono">WiX v5</td>
+            <td>MSI cài dịch vụ, bootstrapper Burn tạo tệp EXE duy nhất</td>
+          </tr>
+          <tr>
+            <td>Kiểm thử</td>
+            <td class="mono">xUnit</td>
+            <td>336 ca, chạy trên thư mục dữ liệu tách biệt khỏi dữ liệu sản xuất</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <div><strong style="color: var(--ink);">SMEPlan AV</strong> · Hồ sơ năng lực kỹ thuật</div>
+    <div class="mono">Windows 10 / 11 · x64</div>
+  </footer>
+
+</div>

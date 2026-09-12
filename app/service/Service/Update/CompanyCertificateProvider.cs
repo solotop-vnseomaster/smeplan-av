@@ -37,7 +37,31 @@ public static class CompanyCertificateProvider
         var cert = req.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(5));
 
         var pfxBytes = cert.Export(X509ContentType.Pfx, PfxPassword);
-        File.WriteAllBytes(PfxPath, pfxBytes);
+
+        // [SUA LOI NGHIEM TRONG] TRUOC DAY File.WriteAllBytes ghi PFX (chua
+        // KHOA RIENG) ra dia truoc, va ACL thu muc chi duoc ap dung o mot
+        // thoi diem khac trong Program.cs — nghia la co mot cua so thoi gian
+        // ma file khoa riêng nam tren dia voi ACL ke thua tu ProgramData
+        // (Users co quyen ghi/doc). Doc duoc PFX nay + mat khau hardcode
+        // ngay trong source la tu ky duoc goi cap nhat, va service SYSTEM se
+        // verify PASS roi nap CSDL do ke tan cong soan — pha vo hoan toan co
+        // che chong gia mao supply-chain.
+        // Sua: khoa ACL thu muc NGAY TRUOC khi ghi, roi khoa rieng chinh
+        // file sau khi ghi. Neu khong khoa duoc thi KHONG ghi file ra dia
+        // (fail-closed) — thà khong tai su dung duoc cert giua cac lan chay
+        // con hon de lo khoa riêng.
+        try
+        {
+            AclProtection.ProtectDataDirectory(Path.GetDirectoryName(PfxPath)!);
+            File.WriteAllBytes(PfxPath, pfxBytes);
+            AclProtection.ProtectFile(PfxPath);
+        }
+        catch (Exception)
+        {
+            try { if (File.Exists(PfxPath)) File.Delete(PfxPath); } catch { }
+            throw new InvalidOperationException(
+                $"Khong bao ve duoc ACL cho {PfxPath} — tu choi ghi khoa riêng ky goi cap nhat ra dia khong duoc bao ve");
+        }
 
         return X509CertificateLoader.LoadPkcs12(pfxBytes, PfxPassword,
             X509KeyStorageFlags.Exportable | X509KeyStorageFlags.MachineKeySet);

@@ -59,6 +59,32 @@ public sealed class ScanCacheStore
             );
             """;
         cmd.ExecuteNonQuery();
+
+        // [SUA LOI CAO] Danh so phien ban schema. Store nay khong ke thua
+        // SqliteStoreBase (no co connection string rieng voi "Default
+        // Timeout") nen khong dung duoc EnsureSchema — nhung no VAN phai co
+        // user_version, neu khong thi day la store duy nhat khong the phat
+        // hien duoc lech schema giua cac ban cai.
+        //
+        // Cache la du lieu CO THE VUT BO: neu phien ban tren dia khac phien
+        // ban code nay biet (cu hon HOAC moi hon), cach xu ly dung va an
+        // toan nhat la XOA SACH cache va bat dau lai — mat toc do mot lan
+        // quet, khong bao gio mat tinh dung dan. Day la khac biet co chu y
+        // so voi cac store luu chinh sach/du lieu nguoi dung, noi vut bo la
+        // khong chap nhan duoc.
+        const int currentSchemaVersion = 1;
+        using (var versionCmd = conn.CreateCommand())
+        {
+            versionCmd.CommandText = "PRAGMA user_version;";
+            int onDisk = Convert.ToInt32(versionCmd.ExecuteScalar() ?? 0);
+            if (onDisk != currentSchemaVersion)
+            {
+                using var resetCmd = conn.CreateCommand();
+                resetCmd.CommandText =
+                    $"DELETE FROM scan_cache; PRAGMA user_version = {currentSchemaVersion};";
+                resetCmd.ExecuteNonQuery();
+            }
+        }
     }
 
     // [SUA LOI HIEU NANG] TRUOC DAY moi lan doc/ghi cache (TryGetCached/
@@ -85,8 +111,27 @@ public sealed class ScanCacheStore
     // Chi cho ket qua khop CA BA: duong dan, mtime, kich thuoc — VA cung
     // dung signature_db_version hien tai. Khac bat ky dieu kien nao -> coi
     // nhu cache miss, quet lai that.
-    public ScanResultDto? TryGetCached(string path, long lastWriteTicks, long fileSize, int currentSignatureDbVersion)
+    // [SUA LOI NGHIEM TRONG] Khoa cache TRUOC DAY chi gom (path, mtime,
+    // size, sigVersion) — KHONG co hash noi dung. Ca ba thanh phan dau deu
+    // do nguoi dung dieu khien duoc bang quyen THUONG: ghi de mot file da
+    // duoc cache Clean bang payload cung kich thuoc roi goi
+    // File.SetLastWriteTimeUtc de dat lai mtime cu la file do duoc BO QUA
+    // VINH VIEN o moi lan quet sau, khong bao gio bi cham toi nua. Day la
+    // duong bypass re nhat toan san pham va no khong de lai dau vet nao.
+    //
+    // Sua: cache chi duoc chap nhan khi hash noi dung THAT SU cua file khop
+    // voi hash da luu cung ket qua. actualSha256Hex do phia goi tinh (xem
+    // FullScanService) — bam SHA-256 mot file van re hon nhieu lan so voi
+    // chay day du hash/YARA/heuristic, nen cache VAN co gia tri lon; thu ma
+    // no mat di chi la kha nang tin vao metadata, dieu le ra khong bao gio
+    // duoc phep.
+    public ScanResultDto? TryGetCached(string path, long lastWriteTicks, long fileSize,
+                                       int currentSignatureDbVersion, string? actualSha256Hex)
     {
+        // Khong tinh duoc hash (file bi khoa, loi I/O...) -> coi nhu cache
+        // miss va quet that, KHONG duoc tin cache mot cach mu quang.
+        if (string.IsNullOrEmpty(actualSha256Hex)) return null;
+
         using var conn = Open();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
@@ -100,6 +145,14 @@ public sealed class ScanCacheStore
 
         using var reader = cmd.ExecuteReader();
         if (!reader.Read()) return null;
+
+        var cachedHash = reader.GetString(2);
+        if (!string.Equals(cachedHash, actualSha256Hex, StringComparison.OrdinalIgnoreCase))
+        {
+            // Noi dung file da doi du metadata trung khop — dung la kich ban
+            // ghi de + SetLastWriteTimeUtc o tren. Cache khong dung duoc.
+            return null;
+        }
 
         return new ScanResultDto
         {

@@ -97,6 +97,27 @@ public class FullScanServiceTests : IDisposable
     // test cac chuyen doi trang thai KHONG can cho lau.
     private string EmptyScanTarget() => Directory.CreateTempSubdirectory("avtest_fullscan_empty_").FullName;
 
+    // [SUA LOI TEST FLAKY] Mot so test can lan quet VAN CON DANG CHAY trong
+    // suot thoi gian test thao tac. Voi EmptyScanTarget() thi RunScan ket
+    // thuc gan nhu tuc thi, nen bat ky khang dinh nao dua tren "dang Running"
+    // deu tro thanh mot cuoc dua voi chinh no. Target nay du lon de lan quet
+    // song lau hon nhieu so voi cua so dua (xem ghi chu tai
+    // Start_CalledConcurrentlyFromMultipleThreads_OnlyOneSucceeds).
+    private string SlowScanTarget(int fileCount = 3000)
+    {
+        var dir = Directory.CreateTempSubdirectory("avtest_fullscan_slow_").FullName;
+        var content = new byte[1024];
+        for (int i = 0; i < fileCount; i++)
+        {
+            // Noi dung khac nhau tung file de khong bi cache hash lam ngan
+            // lai (ScanCacheStore khoa theo hash).
+            content[0] = (byte)(i & 0xFF);
+            content[1] = (byte)((i >> 8) & 0xFF);
+            File.WriteAllBytes(Path.Combine(dir, $"f{i}.bin"), content);
+        }
+        return dir;
+    }
+
     [Fact]
     public void Start_ReturnsTrue_AndSetsStatusRunningImmediately()
     {
@@ -198,6 +219,129 @@ public class FullScanServiceTests : IDisposable
         bool startedAgain = _scan.Start(EmptyScanTarget());
 
         Assert.True(startedAgain);
+    }
+
+    // [test-coverage] Kich ban chinh xac cua bug da sua: Start() truoc day
+    // la check-then-act KHONG khoa, goi dong thoi tu nhieu luong (giong HTTP
+    // request va UsbMonitorService cung kich hoat auto-scan) co the ca hai
+    // cung vuot qua check truoc khi luong nao kip gan Status=Running. Bat
+    // nhieu luong that su dong thoi bang Barrier de toi da hoa co hoi trung
+    // race neu guard bi mat khoa; sau khi sua, CHI DUNG MOT luong duoc phep
+    // thanh cong.
+    [Fact]
+    public async Task Start_CalledConcurrentlyFromMultipleThreads_OnlyOneSucceeds()
+    {
+        // [SUA LOI TEST FLAKY] Test nay TRUOC DAY dung EmptyScanTarget() va
+        // that bai khoang 2/3 so lan khi chay CA BO test (chay rieng thi gan
+        // nhu luon xanh — dau hieu dien hinh cua phu thuoc timing chu khong
+        // phai loi san pham). Nguyen nhan da xac dinh bang do dac: thong diep
+        // that bai luon la "so lan Start() thanh cong = 2; status = Completed".
+        //
+        // Tuc la KHONG phai Start() cho hai lan quet chay song song — khoa
+        // trong Start() hoan toan dung. Ma la: lan quet dau tren mot thu muc
+        // RONG ket thuc trong vai chuc micro giay, TRUOC khi ca 16 thread kip
+        // goi Start(). Thread nao goi sau do gap Status = Completed nen
+        // thanh cong — dung theo dac ta. Test dang khang dinh mot dieu manh
+        // hon thuc te: no gia dinh lan quet con song suot cuoc dua.
+        //
+        // Sua: cho lan quet mot khoi luong that de no chac chan con Running
+        // trong suot cua so dua, VA khang dinh ro tien de do — neu may qua
+        // nhanh/qua tai lam lan quet van kip xong, test bao dung ly do ("tien
+        // de bi pha") thay vi do voi mot con so kho hieu.
+        var target = SlowScanTarget();
+
+        const int threadCount = 16;
+        var barrier = new Barrier(threadCount);
+        var results = new bool[threadCount];
+        var statusesSeen = new FullScanStatus[threadCount];
+        var tasks = new Task[threadCount];
+
+        for (int i = 0; i < threadCount; i++)
+        {
+            int idx = i;
+            tasks[idx] = Task.Run(() =>
+            {
+                barrier.SignalAndWait();
+                results[idx] = _scan.Start(target);
+                statusesSeen[idx] = _scan.GetProgress().Status;
+            });
+        }
+
+        await Task.WhenAll(tasks);
+
+        // Tien de: lan quet phai VAN CON SONG khi cuoc dua ket thuc. Neu
+        // khong, khang dinh "chi mot lan thanh cong" khong con y nghia.
+        Assert.False(statusesSeen.Contains(FullScanStatus.Completed),
+            "TIEN DE BI PHA: lan quet da hoan tat NGAY TRONG cuoc dua, nen nhieu lan " +
+            "Start() thanh cong la dung dac ta chu khong phai loi. Tang so file trong " +
+            "SlowScanTarget() de lan quet song lau hon cua so dua.");
+
+        Assert.True(results.Count(r => r) == 1,
+            $"so lan Start() thanh cong = {results.Count(r => r)}; status hien tai = {_scan.GetProgress().Status}");
+
+        _scan.Cancel();
+        await WaitForStatusAsync(s => s != FullScanStatus.Running && s != FullScanStatus.Paused);
+    }
+
+    // [test-coverage] Truoc day Resume()/Pause() khong kiem tra trang thai
+    // hien tai — goi Resume() khi dang Idle (chua tung Start()) se tao
+    // Status=Running "ma" (khong RunScan nao thuc su chay phia sau).
+    [Fact]
+    public void Resume_WhenIdle_ReturnsFalse_DoesNotChangeStatus()
+    {
+        bool resumed = _scan.Resume();
+
+        Assert.False(resumed);
+        Assert.Equal(FullScanStatus.Idle, _scan.GetProgress().Status);
+    }
+
+    [Fact]
+    public async Task Pause_WhenIdle_ReturnsFalse_DoesNotChangeStatus()
+    {
+        bool paused = _scan.Pause();
+
+        Assert.False(paused);
+        Assert.Equal(FullScanStatus.Idle, _scan.GetProgress().Status);
+        await Task.CompletedTask;
+    }
+
+    // [test-coverage][KIEM THU HOI QUY] Kich ban chinh xac cua bug CRITICAL
+    // da sua: Start() truoc day CHI chan khi Status == Running, KHONG chan
+    // Paused — trong khi task nen cu van con song, dang block trong vong lap
+    // cho _paused. Goi Start() luc dang Paused (nguoi dung doi o dia, hoac
+    // UsbMonitorService tu dong quet khi cam USB moi) truoc day se duoc chap
+    // nhan va set _paused = false, danh thuc CA task cu (chay song song voi
+    // task moi, cung ghi de _progress/_flaggedItems dung chung).
+    [Fact]
+    public async Task Start_WhilePaused_ReturnsFalse()
+    {
+        var dir = Directory.CreateTempSubdirectory("avtest_fullscan_pausedstart_").FullName;
+        for (int i = 0; i < 5; i++)
+        {
+            File.WriteAllText(Path.Combine(dir, $"f{i}.txt"), "noi dung demo de quet, khong doc hai");
+        }
+
+        _scan.Start(dir);
+        _scan.Pause();
+        var pausedStatus = await WaitForStatusAsync(s => s == FullScanStatus.Paused || s == FullScanStatus.Completed);
+        Assert.Equal(FullScanStatus.Paused, pausedStatus);
+
+        bool startedWhilePaused = _scan.Start(EmptyScanTarget());
+
+        Assert.False(startedWhilePaused);
+        Assert.Equal(FullScanStatus.Paused, _scan.GetProgress().Status);
+    }
+
+    [Fact]
+    public async Task Resume_WhenAlreadyRunning_ReturnsFalse()
+    {
+        _scan.Start(EmptyScanTarget());
+
+        bool resumed = _scan.Resume();
+
+        Assert.False(resumed);
+
+        await WaitForStatusAsync(s => s == FullScanStatus.Completed || s == FullScanStatus.Error);
     }
 
     private async Task<FullScanStatus> WaitForStatusAsync(Func<FullScanStatus, bool> predicate, int timeoutMs = 10_000)

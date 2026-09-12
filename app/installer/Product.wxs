@@ -1,21 +1,69 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   Product.wxs — installer WiX Toolset (v4 schema) cho SmePlanAv.
-  [HAN CHE MOI TRUONG] File nay la MA NGUON THAM CHIEU, CHUA duoc build
-  thanh .msi trong phien lam viec nay vi:
-    - Khong co WiX Toolset CLI cai dat trong moi truong nay.
-    - Cac file driver .sys chua ton tai (chua bien dich duoc, xem
-      app/drivers/README.md) nen khong co gi de dong goi vao MSI thuc su.
-    - Installer phai duoc ky bang CUNG EV Code Signing Certificate da ky
-      driver (modules/02-kien-truc.md muc 2) — chua co certificate that.
 
-  Khi da co du dieu kien (driver da ky qua Microsoft, co EV cert), build
-  bang: wix build Product.wxs -ext WixToolset.Util.wixext -o SmePlanAvSetup.msi
+  [HAN CHE MOI TRUONG] File nay CHUA duoc build thanh .msi trong phien lam
+  viec nay vi khong co WiX Toolset CLI. Danh sach <File> ben duoi KHONG phai
+  doan mo — no duoc lay TRUC TIEP tu output that cua:
+      dotnet publish -c Release -r win-x64 -p:SelfContained=false
+  chay tren ca ba project (Service / Shell / NativeHost). Nhung phan CHUA
+  kiem chung duoc bang cong cu (cu phap util:PermissionEx, util:ServiceConfig,
+  viec giai duoc cac property WIX_ACCOUNT_*) deu duoc danh dau [CHUA VERIFY]
+  tai cho.
+
+  Cac file .sys/.cat cua driver van chua ton tai (chua bien dich duoc, xem
+  app/drivers/README.md), va installer phai duoc ky bang CUNG EV Code Signing
+  Certificate da ky driver (modules/02-kien-truc.md muc 2).
+
+  Build: wix build Product.wxs -ext WixToolset.Util.wixext -o SmePlanAvSetup.msi
+
+  BUOC BAT BUOC TRUOC KHI BUILD — chay publish cho ca ba project, neu khong
+  cac duong dan Source ben duoi se khong ton tai va wix build se that bai:
+      dotnet publish app\service\Service               -c Release -r win-x64 -p:SelfContained=false
+      dotnet publish app\ui\Shell                      -c Release -r win-x64 -p:SelfContained=false
+      dotnet publish app\browser-extension\native-host -c Release -r win-x64 -p:SelfContained=false
 -->
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <!-- [SUA LOI CHAN PHAT HANH — A1/A2] TRUOC DAY moi Source deu tro thang
+       vao thu muc `bin\Release\<TFM>\` (output build) va chi khai DUNG MOT
+       file .exe cho moi project.
+       Hai hau qua doc lap, moi cai tu no du de bay cai khong chay duoc:
+         A1 — native_host duoc khai la `net9.0-windows`, nhung
+              NativeHost.csproj dat TargetFramework la `net9.0`. Duong dan do
+              KHONG BAO GIO ton tai, nen `wix build` that bai va MSI chua
+              tung duoc tao ra lan nao.
+         A2 — Service.csproj la framework-dependent, khong PublishSingleFile,
+              khong SelfContained. Chi chep Antivirus.Service.exe nghia la
+              tren may dich thieu .deps.json, .runtimeconfig.json,
+              Microsoft.Data.Sqlite.dll, e_sqlite3.dll, System.Management.dll,
+              scan_engine.dll va toan bo wwwroot — exe khong the khoi dong.
+       Sua: doi sang thu muc `publish` (RID win-x64, framework-dependent) va
+       khai tuong minh tung file. Bien dinh nghia o day de chi con MOT cho
+       phai sua khi doi cau hinh/RID. -->
+  <!-- [SUA LOI CHAN PHAT HANH] Version phai THAY DOI moi ban phat hanh.
+       Windows Installer chi ghi de mot file khi phien ban file MOI HON. Khi
+       moi assembly deu co dinh 1.0.0.0, ban cai moi cai len ban cu se GIU
+       NGUYEN binary cu va bao "thanh cong" — quan sat truc tiep: sau khi cai
+       lai, AntivirusApp.dll van la ban build luc 20:11 trong khi goi chua ban
+       20:34. Nghia la moi ban va loi phat hanh ve sau deu am tham khong toi
+       duoc may nguoi dung.
+       build-installer.ps1 truyen -d ProductVersion=<x.y.z.w> VA
+       -p:Version=<x.y.z> cho dotnet publish, de version cua MSI va cua tung
+       file luon di cung nhau. -->
+  <?ifndef ProductVersion ?>
+  <?define ProductVersion = 1.0.0.0 ?>
+  <?endif?>
+
+  <?define Rid = win-x64 ?>
+  <?define ServicePublishDir = ..\service\Service\bin\Release\net9.0-windows\$(Rid)\publish ?>
+  <?define ShellPublishDir = ..\ui\Shell\bin\Release\net9.0-windows\$(Rid)\publish ?>
+  <?define NativeHostPublishDir = ..\browser-extension\native-host\bin\Release\net9.0\$(Rid)\publish ?>
+
   <Package Name="SmePlanAv Antivirus"
            Manufacturer="SmePlanAv"
-           Version="1.0.0.0"
+           Version="$(ProductVersion)"
            UpgradeCode="8f2b6b1a-2f3a-4b7e-9c1a-6e2d5f7a9b10"
            Compressed="yes">
 
@@ -25,24 +73,86 @@
     <!-- Yeu cau quyen Administrator de cai driver kernel-mode -->
     <Property Id="MSIUSEREALADMINDETECTION" Value="1" />
 
+    <!-- [CHUA VERIFY] Giai cac property WIX_ACCOUNT_LOCALSYSTEM /
+         WIX_ACCOUNT_ADMINISTRATORS theo SID thay vi theo ten tieng Anh —
+         tren Windows ban dia hoa, "Administrators" khong phai ten nhom that
+         nen PermissionEx se that bai neu hard-code ten. -->
+    <util:QueryWindowsWellKnownSIDs />
+
     <Feature Id="MainFeature" Title="SmePlanAv Antivirus" Level="1">
+      <ComponentGroupRef Id="DataDirComponents" />
       <ComponentGroupRef Id="ServiceComponents" />
+      <ComponentGroupRef Id="ServiceWwwRootComponents" />
       <ComponentGroupRef Id="ShellComponents" />
       <ComponentGroupRef Id="DriverComponents" />
+<?ifdef ChromeExtensionId ?>
+      <ComponentGroupRef Id="NativeHostComponents" />
+<?endif?>
     </Feature>
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="SmePlanAv">
-        <Directory Id="SERVICEDIR" Name="Service" />
+        <Directory Id="SERVICEDIR" Name="Service">
+          <Directory Id="WWWROOTDIR" Name="wwwroot">
+            <Directory Id="WWWROOTCSSDIR" Name="css" />
+            <Directory Id="WWWROOTJSDIR" Name="js" />
+          </Directory>
+        </Directory>
         <Directory Id="SHELLDIR" Name="Shell" />
         <Directory Id="DRIVERDIR" Name="Drivers" />
+        <!-- [SUA LOI NGHIEM TRONG] Thu muc nay TRUOC DAY khong ton tai:
+             installer khong dong goi native_host.exe, nen chuoi native
+             messaging (chong phishing) khong bao gio chay duoc tren may
+             da cai. Ten thu muc cai that la "SmePlanAv\NativeHost" —
+             native_host_manifest.json PHAI tro dung vao day. -->
+        <Directory Id="NATIVEHOSTDIR" Name="NativeHost" />
       </Directory>
     </StandardDirectory>
 
-    <!-- Service nen: cai dat + dang ky nhu mot Windows Service (SYSTEM, boot/auto start) -->
+    <!-- [SUA LOI CHAN PHAT HANH — A3 DAY CHUYEN] Cay du lieu duoc tao va
+         KHOA NGAY LUC CAI, truoc khi service chay lan dau.
+         Van de goc: %ProgramData% mac dinh cho Users quyen tao thu muc con
+         va cho CREATOR OWNER FullControl tren nhung gi ho tao ra. Neu thu
+         muc AntivirusApp\ chi xuat hien lan dau khi service goi
+         Directory.CreateDirectory, thi bat ky tien trinh quyen thap nao
+         chay TRUOC deu co the tu tao no, tro thanh CHU SO HUU, va giu
+         WRITE_DAC ngam vinh vien — tu cap lai quyen bat cu luc nao ke ca
+         sau khi service da siet DACL.
+         Day la lop thu nhat (dong cua so ngay tu luc cai). Lop thu hai la
+         AclProtection.ProtectAllDataDirectories() trong Program.cs, gio da
+         chay TRUOC moi dang ky DI va co doat quyen so huu. Can ca hai:
+         installer khong bao phu duong chay-tu-source, con service khong
+         bao phu khoang thoi gian truoc lan khoi dong dau tien.
+         [CHUA VERIFY] Cu phap util:PermissionEx chua build thu duoc o day.
+         PermissionEx thay the toan bo DACL va ngat ke thua — dung y muon. -->
+    <!-- Hai thu muc chuan chua shortcut. Phai khai bao thi Shortcut/@Directory
+         moi tham chieu duoc. DesktopFolder o ban cai per-machine giai ra
+         Desktop CHUNG (C:\Users\Public\Desktop) nen moi tai khoan tren may
+         deu thay. -->
+    <StandardDirectory Id="ProgramMenuFolder" />
+    <StandardDirectory Id="DesktopFolder" />
+
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="DATAROOTDIR" Name="AntivirusApp" />
+    </StandardDirectory>
+
+    <ComponentGroup Id="DataDirComponents" Directory="DATAROOTDIR">
+      <Component Id="DataRootDir" Guid="*">
+        <CreateFolder>
+          <util:PermissionEx User="[WIX_ACCOUNT_LOCALSYSTEM]" GenericAll="yes" />
+          <util:PermissionEx User="[WIX_ACCOUNT_ADMINISTRATORS]" GenericAll="yes" />
+        </CreateFolder>
+        <!-- KeyPath cho component khong co file. Cung la cho de cong cu van
+             hanh tra ra duong dan du lieu ma khong phai doan. -->
+        <RegistryValue Root="HKLM" Key="SOFTWARE\SmePlanAv" Name="DataDir"
+                       Value="[DATAROOTDIR]" Type="string" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Service nen: cai dat + dang ky nhu mot Windows Service (SYSTEM, auto start) -->
     <ComponentGroup Id="ServiceComponents" Directory="SERVICEDIR">
       <Component Id="ServiceExe" Guid="*">
-        <File Id="ServiceExeFile" Source="..\service\Service\bin\Release\net9.0-windows\Antivirus.Service.exe" KeyPath="yes" />
+        <File Id="ServiceExeFile" Source="$(ServicePublishDir)\Antivirus.Service.exe" KeyPath="yes" />
         <ServiceInstall
           Id="SmePlanAvServiceInstall"
           Name="SmePlanAvService"
@@ -51,23 +161,252 @@
           Type="ownProcess"
           Start="auto"
           Account="LocalSystem"
-          ErrorControl="normal" />
+          ErrorControl="normal">
+          <!-- [SUA LOI] TRUOC DAY khong co recovery action nao: mot lan
+               service chet (vi du engine native nem ngoai le) la may mat
+               bao ve han cho toi lan reboot sau. Mot AV khong duoc phep
+               chet im lang mot lan roi thoi.
+               [CHUA VERIFY] cu phap util:ServiceConfig chua build thu duoc. -->
+          <util:ServiceConfig
+            FirstFailureActionType="restart"
+            SecondFailureActionType="restart"
+            ThirdFailureActionType="restart"
+            RestartServiceDelayInSeconds="60"
+            ResetPeriodInDays="1" />
+        </ServiceInstall>
         <ServiceControl Id="SmePlanAvServiceControl" Name="SmePlanAvService" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+      </Component>
+
+      <!-- Runtime .NET framework-dependent: thieu BAT KY file nao trong so
+           nay la exe khong khoi dong duoc (host khong biet nap runtime nao /
+           assembly nao). -->
+      <Component Id="ServiceRuntimeFiles" Guid="*">
+        <File Id="ServiceDll" Source="$(ServicePublishDir)\Antivirus.Service.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="CmpServiceDepsJson" Guid="*">
+        <File Id="ServiceDepsJson" KeyPath="yes" Source="$(ServicePublishDir)\Antivirus.Service.deps.json" />
+      </Component>
+      <Component Id="CmpServiceRuntimeConfigJson" Guid="*">
+        <File Id="ServiceRuntimeConfigJson" KeyPath="yes" Source="$(ServicePublishDir)\Antivirus.Service.runtimeconfig.json" />
+      </Component>
+      <Component Id="CmpServiceStaticWebAssets" Guid="*">
+        <File Id="ServiceStaticWebAssets" KeyPath="yes" Source="$(ServicePublishDir)\Antivirus.Service.staticwebassets.endpoints.json" />
+      </Component>
+      <Component Id="CmpServiceAppSettings" Guid="*">
+        <File Id="ServiceAppSettings" KeyPath="yes" Source="$(ServicePublishDir)\appsettings.json" />
+      </Component>
+
+      <!-- SQLite: 4 assembly quan ly + native e_sqlite3.dll. Thieu
+           e_sqlite3.dll thi moi truy van rules.db/quarantine.db/scan_cache.db
+           nem DllNotFoundException luc chay chu khong bao loi luc build. -->
+      <Component Id="ServiceSqliteFiles" Guid="*">
+        <File Id="SqliteDll" Source="$(ServicePublishDir)\Microsoft.Data.Sqlite.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="CmpSqlitePclBatteries" Guid="*">
+        <File Id="SqlitePclBatteries" KeyPath="yes" Source="$(ServicePublishDir)\SQLitePCLRaw.batteries_v2.dll" />
+      </Component>
+      <Component Id="CmpSqlitePclCore" Guid="*">
+        <File Id="SqlitePclCore" KeyPath="yes" Source="$(ServicePublishDir)\SQLitePCLRaw.core.dll" />
+      </Component>
+      <Component Id="CmpSqlitePclProvider" Guid="*">
+        <File Id="SqlitePclProvider" KeyPath="yes" Source="$(ServicePublishDir)\SQLitePCLRaw.provider.e_sqlite3.dll" />
+      </Component>
+      <Component Id="CmpSqliteNative" Guid="*">
+        <File Id="SqliteNative" KeyPath="yes" Source="$(ServicePublishDir)\e_sqlite3.dll" />
+      </Component>
+
+      <!-- System.Management (WMI) keo theo System.CodeDom. -->
+      <Component Id="ServiceManagementFiles" Guid="*">
+        <File Id="SystemManagementDll" Source="$(ServicePublishDir)\System.Management.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="CmpSystemCodeDomDll" Guid="*">
+        <File Id="SystemCodeDomDll" KeyPath="yes" Source="$(ServicePublishDir)\System.CodeDom.dll" />
+      </Component>
+
+      <!-- Engine quet C++ — P/Invoke tu ScanEngineService. Thieu file nay
+           thi Engine_Initialize tra false va service chay ma khong quet
+           duoc gi (xem invariant "scan_engine.dll vang mat" trong review). -->
+      <Component Id="ServiceScanEngine" Guid="*">
+        <File Id="ScanEngineDll" Source="$(ServicePublishDir)\scan_engine.dll" KeyPath="yes" />
+      </Component>
+
+      <!-- [SUA LOI CHAN PHAT HANH] Hai assembly cho UseWindowsService().
+           Program.cs goi builder.Host.UseWindowsService() de service bao
+           SERVICE_RUNNING cho SCM (khong co no thi SCM bao loi 1053). Nhung
+           danh sach <File> trong file nay la TUONG MINH, va khi
+           PackageReference do duoc them vao Service.csproj thi danh sach o
+           day KHONG duoc cap nhat theo.
+           Trieu chung quan sat duoc: MSI cai xong, SCM khoi dong service,
+           tien trinh crash ngay voi
+             FileNotFoundException: Could not load file or assembly
+             'Microsoft.Extensions.Hosting.WindowsServices'
+           -> Error 1920 -> MSI rollback -> ban cai KHONG BAO GIO hoan tat.
+           System.ServiceProcess.ServiceController.dll la phu thuoc keo theo.
+           Xem them kiem tra doi chieu tu dong trong build-installer.ps1: no
+           chan dung lop sai sot nay o buoc build thay vi de lo ra luc cai. -->
+      <Component Id="ServiceWindowsServicesHosting" Guid="*">
+        <File Id="HostingWindowsServicesDll" KeyPath="yes"
+              Source="$(ServicePublishDir)\Microsoft.Extensions.Hosting.WindowsServices.dll" />
+      </Component>
+      <Component Id="ServiceControllerAssembly" Guid="*">
+        <File Id="ServiceProcessControllerDll" KeyPath="yes"
+              Source="$(ServicePublishDir)\System.ServiceProcess.ServiceController.dll" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Giao dien web do chinh service phuc vu (Kestrel + UseStaticFiles).
+         Thieu wwwroot thi /api van chay nhung UI trang tron. Ban .br/.gz la
+         ban nen san do build sinh ra, static files middleware tu chon dung. -->
+    <ComponentGroup Id="ServiceWwwRootComponents">
+      <Component Id="WwwRootIndex" Directory="WWWROOTDIR" Guid="*">
+        <File Id="WwwIndexHtml" Source="$(ServicePublishDir)\wwwroot\index.html" KeyPath="yes" />
+      </Component>
+      <Component Id="CmpWwwIndexHtmlBr" Directory="WWWROOTDIR" Guid="*">
+        <File Id="WwwIndexHtmlBr" KeyPath="yes" Source="$(ServicePublishDir)\wwwroot\index.html.br" />
+      </Component>
+      <Component Id="CmpWwwIndexHtmlGz" Directory="WWWROOTDIR" Guid="*">
+        <File Id="WwwIndexHtmlGz" KeyPath="yes" Source="$(ServicePublishDir)\wwwroot\index.html.gz" />
+      </Component>
+      <Component Id="WwwRootCss" Directory="WWWROOTCSSDIR" Guid="*">
+        <File Id="WwwStyleCss" Source="$(ServicePublishDir)\wwwroot\css\style.css" KeyPath="yes" />
+      </Component>
+      <Component Id="CmpWwwStyleCssBr" Directory="WWWROOTCSSDIR" Guid="*">
+        <File Id="WwwStyleCssBr" KeyPath="yes" Source="$(ServicePublishDir)\wwwroot\css\style.css.br" />
+      </Component>
+      <Component Id="CmpWwwStyleCssGz" Directory="WWWROOTCSSDIR" Guid="*">
+        <File Id="WwwStyleCssGz" KeyPath="yes" Source="$(ServicePublishDir)\wwwroot\css\style.css.gz" />
+      </Component>
+      <Component Id="WwwRootJs" Directory="WWWROOTJSDIR" Guid="*">
+        <File Id="WwwAppJs" Source="$(ServicePublishDir)\wwwroot\js\app.js" KeyPath="yes" />
+      </Component>
+      <Component Id="CmpWwwAppJsBr" Directory="WWWROOTJSDIR" Guid="*">
+        <File Id="WwwAppJsBr" KeyPath="yes" Source="$(ServicePublishDir)\wwwroot\js\app.js.br" />
+      </Component>
+      <Component Id="CmpWwwAppJsGz" Directory="WWWROOTJSDIR" Guid="*">
+        <File Id="WwwAppJsGz" KeyPath="yes" Source="$(ServicePublishDir)\wwwroot\js\app.js.gz" />
       </Component>
     </ComponentGroup>
 
     <!-- Shell UI (WPF + WebView2) -->
     <ComponentGroup Id="ShellComponents" Directory="SHELLDIR">
       <Component Id="ShellExe" Guid="*">
-        <File Id="ShellExeFile" Source="..\ui\Shell\bin\Release\net9.0-windows\AntivirusApp.exe" KeyPath="yes" />
-        <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="SmePlanAv Antivirus"
-                   WorkingDirectory="SHELLDIR" Advertise="yes" />
+        <File Id="ShellExeFile" Source="$(ShellPublishDir)\AntivirusApp.exe" KeyPath="yes" />
+
+        <!-- [SUA LOI] TRUOC DAY chi co MOT shortcut Start Menu, va no dat
+             Advertise="yes".
+             Hai van de:
+             (1) Khong co shortcut Desktop. Nguoi dung cai xong khong thay
+                 ung dung dau ca - phan lon nguoi dung Windows tim app o
+                 man hinh nen truoc tien.
+             (2) Shortcut "advertised" tro toi mot exe doi requireAdministrator
+                 la to hop de gay phien: moi lan bam, Windows Installer chay
+                 logic resolve/repair TRUOC roi moi toi UAC. Shortcut thuong
+                 (tro thang toi file) don gian va doan duoc hon.
+             Dung Target tro truc tiep toi ShellExeFile. -->
+        <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder"
+                  Name="SmePlanAv Antivirus"
+                  Description="Trung tam bao ve SmePlanAv"
+                  Target="[#ShellExeFile]" WorkingDirectory="SHELLDIR" />
+        <Shortcut Id="DesktopShortcut" Directory="DesktopFolder"
+                  Name="SmePlanAv Antivirus"
+                  Description="Trung tam bao ve SmePlanAv"
+                  Target="[#ShellExeFile]" WorkingDirectory="SHELLDIR" />
+      </Component>
+      <Component Id="ShellRuntimeFiles" Guid="*">
+        <File Id="ShellDll" Source="$(ShellPublishDir)\AntivirusApp.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="CmpShellDepsJson" Guid="*">
+        <File Id="ShellDepsJson" KeyPath="yes" Source="$(ShellPublishDir)\AntivirusApp.deps.json" />
+      </Component>
+      <Component Id="CmpShellRuntimeConfigJson" Guid="*">
+        <File Id="ShellRuntimeConfigJson" KeyPath="yes" Source="$(ShellPublishDir)\AntivirusApp.runtimeconfig.json" />
+      </Component>
+      <!-- WebView2: 3 assembly quan ly + WebView2Loader.dll native. Thieu
+           loader thi cua so Shell mo len rong tron, khong co thong bao loi. -->
+      <Component Id="ShellWebView2Files" Guid="*">
+        <File Id="WebView2Core" Source="$(ShellPublishDir)\Microsoft.Web.WebView2.Core.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="CmpWebView2WinForms" Guid="*">
+        <File Id="WebView2WinForms" KeyPath="yes" Source="$(ShellPublishDir)\Microsoft.Web.WebView2.WinForms.dll" />
+      </Component>
+      <Component Id="CmpWebView2Wpf" Guid="*">
+        <File Id="WebView2Wpf" KeyPath="yes" Source="$(ShellPublishDir)\Microsoft.Web.WebView2.Wpf.dll" />
+      </Component>
+      <Component Id="CmpWebView2Loader" Guid="*">
+        <File Id="WebView2Loader" KeyPath="yes" Source="$(ShellPublishDir)\WebView2Loader.dll" />
       </Component>
     </ComponentGroup>
 
+    <!-- [SUA LOI NGHIEM TRONG] Native messaging host cho browser extension.
+         Thieu component nay la ly do chuoi chong phishing khong hoat dong
+         tren may that: extension goi native host, native host khong ton
+         tai tren dia vi installer chua bao gio chep no vao. -->
+    <!-- [SUA LOI CHAN PHAT HANH] Toan bo nhom nay CHI duoc dong goi khi build
+         co truyen -dChromeExtensionId=<id>. Ly do: allowed_origins trong
+         native_host_manifest.json phai chua DUNG ID that cua extension thi
+         Chrome moi chap nhan ket noi native messaging. Extension nay khong co
+         truong "key" trong manifest.json nen ID do Chrome cap luc dong goi —
+         khong the biet truoc luc build.
+         Dong goi ma khong co ID dung nghia la cai dat mot tang chong phishing
+         KHONG BAO GIO hoat dong, im lang tuyet doi — dung cai lo hong da duoc
+         sua. Thieu ID thi BO HAN phan nay khoi ban cai: thieu mot cach nhin
+         thay duoc, tot hon co mot cach gia. -->
+<?ifdef ChromeExtensionId ?>
+    <ComponentGroup Id="NativeHostComponents" Directory="NATIVEHOSTDIR">
+      <Component Id="NativeHostExe" Guid="*">
+        <File Id="NativeHostExeFile" Source="$(NativeHostPublishDir)\native_host.exe" KeyPath="yes" />
+      </Component>
+      <Component Id="NativeHostRuntimeFiles" Guid="*">
+        <File Id="NativeHostDll" Source="$(NativeHostPublishDir)\native_host.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="CmpNativeHostDepsJson" Guid="*">
+        <File Id="NativeHostDepsJson" KeyPath="yes" Source="$(NativeHostPublishDir)\native_host.deps.json" />
+      </Component>
+      <Component Id="CmpNativeHostRuntimeConfigJson" Guid="*">
+        <File Id="NativeHostRuntimeConfigJson" KeyPath="yes" Source="$(NativeHostPublishDir)\native_host.runtimeconfig.json" />
+      </Component>
+      <!-- [SUA LOI CHAN BUILD] TRUOC DAY File va RegistryValue nam CHUNG mot
+           Component voi Guid="*". WiX tu choi: mot component vua co file vua
+           co registry keypath thi khong du dieu kien sinh GUID tu dong
+           (WIX0230). Day la mot trong nhung ly do `wix build` chua bao gio
+           chay xong tren file nay. Tach lam hai component, moi cai mot
+           keypath duy nhat. -->
+      <Component Id="NativeHostManifestFileComponent" Guid="*">
+        <!-- [SUA LOI NGHIEM TRONG] native_host_manifest.json TRUOC DAY duoc
+             check-in san voi nguyen van placeholder
+             "<EXTENSION_ID_SE_DIEN_KHI_DANG_KY_THAT>" trong allowed_origins,
+             va duoc dong goi nguyen xi roi ghi vao registry ben duoi. Chrome
+             doi chieu allowed_origins voi ID that cua extension dang goi —
+             mot chuoi placeholder khong bao gio khop — nen Chrome TU CHOI moi
+             ket noi native messaging: toan bo tang chong phishing tat 100%
+             tren moi may cai bang MSI, khong loi, khong log, khong dau hieu.
+             Gio file that phai duoc SINH RA truoc khi build bang
+                 app\ops\scripts\generate-native-host-manifest.ps1 -ExtensionId <id>
+             (script tu choi ID sai dinh dang), va file check-in chi con la
+             *.template.json nen khong the vo tinh dong goi placeholder nua.
+             Neu chua chay script, `wix build` that bai vi khong tim thay
+             file — that bai on ao, dung nhu mong muon. -->
+        <File Id="NativeHostManifestFile" KeyPath="yes"
+              Source="..\browser-extension\native-host\native_host_manifest.json" />
+      </Component>
+      <!-- Chrome doc manifest qua khoa registry nay. -->
+      <Component Id="NativeHostManifestRegistration" Guid="*">
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Google\Chrome\NativeMessagingHosts\com.smeplanav.native_host"
+                       Value="[NATIVEHOSTDIR]native_host_manifest.json"
+                       Type="string" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+<?endif?>
+
     <!-- Driver kernel-mode: minifilter + ELAM. Trien khai that can dung
          DifxApp/PnPUtil de cai + dang ky boot-start; day la placeholder
-         cau truc, KHONG co file .sys/.cat that di kem (chua bien dich). -->
+         cau truc, KHONG co file .sys/.cat that di kem (chua bien dich).
+         CANH BAO VAN HANH: minifilter.inf dang dat StartType = 0
+         (SERVICE_BOOT_START) trong khi CHUA co client user-mode nao ket noi
+         cong giao tiep cua driver. Xem app/drivers/README.md truoc khi bat
+         DriverComponents len — nap driver o trang thai do lam may khong boot
+         duoc vao desktop. -->
     <ComponentGroup Id="DriverComponents" Directory="DRIVERDIR">
       <Component Id="MiniFilterDriver" Guid="*">
         <File Id="MiniFilterInf" Source="..\drivers\minifilter\minifilter.inf" KeyPath="yes" />

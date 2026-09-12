@@ -61,8 +61,18 @@ typedef struct _SMEPLANAV_FW_CACHE_ENTRY {
 
 typedef struct _SMEPLANAV_FW_CONTEXT {
     HANDLE EngineHandle;               // FwpmEngineOpen0
-    UINT32 CalloutId;                  // FwpsCalloutRegister0 tra ve
+    UINT32 CalloutId;                  // FwpsCalloutRegister3 tra ve
     BOOLEAN CalloutRegistered;
+    // [SUA LOI NGHIEM TRONG] Xem DriverEntry/DriverUnload trong
+    // wfp_callout.c: cac object FWPM (filter, callout, sublayer) duoc them
+    // trong mot session KHONG DYNAMIC nen chung TON TAI TIEP sau khi driver
+    // unload. Phai luu lai id de xoa tung cai mot khi unload; neu khong,
+    // mot filter mo coi van tro toi callout DA GO se lam bugcheck o ket noi
+    // outbound ke tiep, va lan nap sau se that bai vi GUID da bi chiem.
+    UINT64 FilterId;                   // FwpmFilterAdd0 tra ve
+    BOOLEAN FilterAdded;
+    BOOLEAN MgmtCalloutAdded;          // FwpmCalloutAdd0
+    BOOLEAN SubLayerAdded;             // FwpmSubLayerAdd0
     PDEVICE_OBJECT DeviceObject;       // \\.\SmePlanAvFwCallout de service ket noi qua IOCTL
 
     KSPIN_LOCK CacheLock;

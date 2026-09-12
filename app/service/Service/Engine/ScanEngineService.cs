@@ -16,13 +16,55 @@ public sealed class ScanEngineService : IDisposable
         _logger = logger;
     }
 
+    // Khop voi ENGINE_INIT_SIGNATURE_DB_FAILED trong engine/include/scan_engine.h.
+    private const int EngineInitSignatureDbFailed = 1;
+
+    // TRUE khi engine da khoi tao nhung KHONG co CSDL chu ky dung duoc —
+    // tang phat hien theo hash khong hoat dong. Phai duoc phan anh ra trang
+    // thai bao ve hien thi cho nguoi dung, khong duoc coi la "dang bao ve
+    // day du".
+    public bool SignatureDbMissing { get; private set; }
+
     public bool Initialize(string? signatureDbPath, string? yaraRulesDir)
     {
         var rc = ScanEngineInterop.Engine_Initialize(signatureDbPath, yaraRulesDir, 0.001);
-        _initialized = rc == 0;
+        // [SUA LOI NGHIEM TRONG] rc == ENGINE_INIT_SIGNATURE_DB_FAILED nghia la
+        // engine chay duoc nhung khong co CSDL hash — truoc day engine tra 0
+        // cho ca truong hop nay va Program.cs con bo qua luon gia tri tra ve,
+        // nen service phuc vu binh thuong voi mot tang phat hien da chet ma
+        // khong co dau hieu nao o bat ky dau.
+        // [SUA LOI NGHIEM TRONG — SEAM] TRUOC DAY chi xet rc. Nhung khi
+        // signatureDbPath la null (Program.cs dat null khi File.Exists tra
+        // false — tuc la may HOAN TOAN chua co CSDL chu ky), phia C++ o
+        // pipeline.cpp short-circuit dieu kien `if (signature_db_path && ...)`
+        // nen sig_db_failed giu nguyen false va Engine_Initialize tra 0.
+        // Ket qua: SignatureDbMissing = false tren dung cai may KHONG CO chu
+        // ky nao ca, va ProtectionStatusService (chi doc co nay) bao
+        // protectionEnabled = true.
+        //
+        // Program.cs co biet su that — no viet `engine.SignatureDbMissing ||
+        // sigDb is null` khi ghi log — nhung chi dung de LOG roi vut di, nen
+        // thong tin do khong bao gio toi duoc tang trang thai. Ba vung deu
+        // "hop ly" khi doc rieng; lo hong nam o duong noi giua chung.
+        //
+        // Sua tai NGUON: "thieu CSDL chu ky" phai dung nghia la khong co CSDL
+        // hash dung duoc — bat ke vi khong co duong dan hay vi nap that bai.
+        // Thu tu quan trong: _initialized phai duoc suy ra tu RC truoc. Neu
+        // tinh no tu SignatureDbMissing (da mo rong ben duoi), mot lan khoi
+        // tao THAT BAI THAT SU (rc khac 0 va khac 1) tren may khong co duong
+        // dan CSDL se bi che thanh "da khoi tao".
+        _initialized = rc == 0 || rc == EngineInitSignatureDbFailed;
+        SignatureDbMissing = _initialized
+            && (rc == EngineInitSignatureDbFailed || string.IsNullOrEmpty(signatureDbPath));
         if (!_initialized)
         {
             _logger.LogWarning("Scan engine khoi tao that bai (rc={Rc})", rc);
+        }
+        else if (SignatureDbMissing)
+        {
+            _logger.LogError(
+                "Scan engine da chay NHUNG KHONG nap duoc CSDL chu ky tu {Db} — phat hien theo hash DANG TAT, chi con YARA/heuristic",
+                signatureDbPath ?? "(khong co)");
         }
         else
         {

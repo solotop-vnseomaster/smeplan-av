@@ -58,12 +58,43 @@ public static class Program
 
         while (true)
         {
-            var request = await ReadMessageAsync(stdin);
-            if (request is null) break; // stdin dong -> trinh duyet da dong extension/tab
+            var (status, request) = await ReadMessageAsync(stdin);
 
-            var response = await HandleRequestAsync(http, token, request.Value);
+            // stdin dong (hoac khung tin nhan hong khong the dong bo lai) ->
+            // trinh duyet da dong extension/tab, hoac kenh da hong.
+            if (status == ReadStatus.EndOfStream) break;
+
+            if (status == ReadStatus.Malformed)
+            {
+                // [SUA LOI NGHIEM TRONG] TRUOC DAY JsonDocument.Parse nam
+                // NGOAI moi try/catch, va vong lap nay khong bat gi ca — mot
+                // tin nhan JSON hong lam JsonException bay len tan Main va
+                // GIET native host. Chrome khong khoi dong lai native host
+                // sau khi no chet: tinh nang chan phishing tat han cho toi
+                // khi nguoi dung khoi dong lai trinh duyet, va KHONG co dau
+                // hieu nao tren giao dien.
+                // So byte cua tin nhan nay da duoc doc het (do dai hop le),
+                // nen luong van dong bo — bo qua rieng tin nhan hong va doc
+                // tiep la an toan. Van tra ve mot phan hoi de callback ben
+                // extension khong treo; background.js coi truong `error` la
+                // "khong co ket luan" va KHONG cache thanh sach.
+                await Console.Error.WriteLineAsync(
+                    "[CANH BAO] SMEPlan AV native host: nhan duoc tin nhan JSON hong — bo qua, tiep tuc chay.");
+                await WriteMessageAsync(stdout,
+                    JsonSerializer.SerializeToElement(new { malicious = false, error = "malformed_request" }));
+                continue;
+            }
+
+            var response = await HandleRequestAsync(http, token, request);
             await WriteMessageAsync(stdout, response);
         }
+    }
+
+    private enum ReadStatus
+    {
+        Message,      // doc duoc mot tin nhan JSON hop le
+        Malformed,    // khung hop le nhung noi dung khong phai JSON -> bo qua, doc tiep
+        EndOfStream,  // stdin dong, hoac khung hong khong the dong bo lai -> dung han
     }
 
     private static async Task<JsonElement> HandleRequestAsync(HttpClient http, string? token, JsonElement request)
@@ -125,7 +156,20 @@ public static class Program
                 Console.Error.WriteLine($"[CANH BAO] SMEPlan AV native host: khong tim thay {path} (service co the chua chay lan nao, hoac chua tao token).");
                 return null;
             }
-            return File.ReadAllText(path).Trim();
+            // [SUA LOI] Truoc day tra ve chuoi rong khi file ton tai nhung
+            // dai 0 byte (service dang ghi do, hoac lan khoi tao bi ngat
+            // giua chung). Chuoi rong KHONG phai null, nen canh bao fail-open
+            // o Main khong chay, va moi request gui di mot header
+            // "X-Av-Token: " rong — service tu choi, khong ai biet vi sao.
+            // Token rong khong khac gi khong co token: coi la null de di
+            // dung nhanh canh bao da co.
+            var raw = File.ReadAllText(path).Trim();
+            if (raw.Length == 0)
+            {
+                Console.Error.WriteLine($"[CANH BAO] SMEPlan AV native host: {path} rong (0 byte) — coi nhu khong co token.");
+                return null;
+            }
+            return raw;
         }
         catch (Exception ex)
         {
@@ -141,21 +185,34 @@ public static class Program
         }
     }
 
-    private static async Task<JsonElement?> ReadMessageAsync(Stream stdin)
+    private static async Task<(ReadStatus Status, JsonElement Message)> ReadMessageAsync(Stream stdin)
     {
         var lengthBuffer = new byte[4];
         int read = await ReadExactAsync(stdin, lengthBuffer, 4);
-        if (read < 4) return null;
+        if (read < 4) return (ReadStatus.EndOfStream, default);
 
         int length = BitConverter.ToInt32(lengthBuffer, 0);
-        if (length <= 0 || length > 10 * 1024 * 1024) return null; // gioi han an toan, khong tin do dai tuy y
+        // Do dai vo ly: luong da mat dong bo va KHONG the dong bo lai (khong
+        // biet phai bo qua bao nhieu byte) -> dung han, khac voi truong hop
+        // JSON hong ben duoi.
+        if (length <= 0 || length > 10 * 1024 * 1024) return (ReadStatus.EndOfStream, default);
 
         var payload = new byte[length];
         read = await ReadExactAsync(stdin, payload, length);
-        if (read < length) return null;
+        if (read < length) return (ReadStatus.EndOfStream, default);
 
-        using var doc = JsonDocument.Parse(payload);
-        return doc.RootElement.Clone();
+        // Toan bo `length` byte da duoc tieu thu, nen du parse that bai thi
+        // luong VAN dong bo — bao "Malformed" de vong lap bo qua rieng tin
+        // nhan nay thay vi giet ca tien trinh.
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            return (ReadStatus.Message, doc.RootElement.Clone());
+        }
+        catch (JsonException)
+        {
+            return (ReadStatus.Malformed, default);
+        }
     }
 
     private static async Task<int> ReadExactAsync(Stream stream, byte[] buffer, int count)

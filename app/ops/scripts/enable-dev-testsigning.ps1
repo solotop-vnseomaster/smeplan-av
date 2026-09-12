@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Bat che do testsigning cho moi truong DEV/TEST de nap duoc driver tu ky
   (khong dung cho production). Khop ops/08-trien-khai.md muc 3 buoc 3.

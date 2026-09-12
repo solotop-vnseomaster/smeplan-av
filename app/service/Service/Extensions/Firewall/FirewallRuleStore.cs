@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using Antivirus.Service.Data;
 
 namespace Antivirus.Service.Extensions.Firewall;
 
@@ -22,21 +23,32 @@ public sealed class FirewallRule
 // "tai lieu moi.txt" muc "Thiet ke rule engine cho firewall" — schema va
 // logic uu tien y het tai lieu mo ta: rule co PRIORITY CAO NHAT trong so
 // cac rule khop dieu kien duoc ap dung, khong dung o rule khop dau tien.
-public sealed class FirewallRuleStore
+// [SUA LOI HIEU NANG] Truoc day tu mo SqliteConnection rieng, khong bat
+// WAL/busy_timeout (khac voi RuleStore/QuarantineStore trong Data/ da duoc
+// vá) — chuyen sang SqliteStoreBase de dong bo co che chong "database is
+// locked" khi nhieu luong cung truy cap (xem SqliteStoreBase.cs).
+public sealed class FirewallRuleStore : SqliteStoreBase
 {
-    private readonly string _connectionString;
-
-    public FirewallRuleStore(string dbPath)
+    public FirewallRuleStore(string dbPath) : base(dbPath)
     {
-        _connectionString = $"Data Source={dbPath}";
         Initialize();
     }
 
     private void Initialize()
     {
         using var conn = Open();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
+        // [SUA LOI CAO] Schema cua store nay TRUOC DAY chay bang
+        // "CREATE TABLE IF NOT EXISTS" tran, khong co danh so phien ban —
+        // nghia la mot CSDL tao boi ban cu se KHONG BAO GIO nhan duoc cot/
+        // index moi khi nguoi dung cap nhat ung dung, va loi chi bung ra
+        // luc chay tren may ho. Xem SqliteStoreBase.EnsureSchema.
+        //
+        // QUY TAC: KHONG BAO GIO sua noi dung mot phan tu da co trong mang
+        // duoi day (may nguoi dung da chay no roi, sua o day khong chay lai).
+        // Thay doi schema = THEM mot chuoi migration MOI vao CUOI mang.
+        EnsureSchema(conn, new[]
+        {
+            """
             CREATE TABLE IF NOT EXISTS firewall_rules (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 app_sha256 TEXT NOT NULL,
@@ -49,16 +61,37 @@ public sealed class FirewallRuleStore
                 created_by TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_fw_app ON firewall_rules(app_sha256, direction);
-            """;
-        cmd.ExecuteNonQuery();
+            """,
+
+            // [SUA LOI CAO — CHUAN HOA HASH] Xem FindBestMatch ben duoi.
+            // Chi sua code so khop la KHONG DU: rule nguoi dung da luu tu
+            // truoc van dang o dang chu HOA (dan tu VirusTotal/Get-FileHash),
+            // va sau khi "sua" chung VAN khong khop — nhung luc do ai cung
+            // tin la da xong. Chuan hoa du lieu da co ngay tai day.
+            """
+            UPDATE firewall_rules SET app_sha256 = lower(trim(app_sha256))
+            WHERE app_sha256 <> lower(trim(app_sha256));
+            """,
+        });
     }
 
-    private SqliteConnection Open()
-    {
-        var conn = new SqliteConnection(_connectionString);
-        conn.Open();
-        return conn;
-    }
+    // [SUA LOI CAO — LECH QUY UOC GIUA CAC MODULE] RuleStore.cs da dinh nghia
+    // dung quy uoc nay (Trim + ToLowerInvariant, ap o CA duong ghi lan doc),
+    // nhung store nay khong ap: FindBestMatch truoc day so sanh bang toan tu
+    // == (ordinal, PHAN BIET hoa/thuong).
+    //
+    // Chuoi bang chung hai dau: app.js chap nhan regex [0-9a-fA-F]{64} nen
+    // nguoi dung dan duoc hash CHU HOA tu VirusTotal / Get-FileHash va gui
+    // nguyen ban; ConnectionMonitor tinh hash bang .ToLowerInvariant(). Hai
+    // dau khong bao gio gap nhau.
+    //
+    // Hau qua sac nhat KHONG phai "rule khong chan" (tang nay von chua thuc
+    // thi o kernel), ma la: ConnectionMonitor bo qua khi khong tim thay rule
+    // khop, nen canh bao "ket noi nay le ra da bi chan" KHONG BAO GIO phat.
+    // Nguoi dung doc duoc dong chu "chua thuc thi" nhung danh sach vi pham
+    // luon rong — de hieu thanh "khong co gi vi pham". Lech quy uoc nay bit
+    // dung kenh telemetry duy nhat con lai cua tang firewall.
+    private static string NormalizeHash(string? hash) => (hash ?? string.Empty).Trim().ToLowerInvariant();
 
     public long Add(FirewallRule rule)
     {
@@ -69,7 +102,7 @@ public sealed class FirewallRuleStore
             VALUES ($sha, $dir, $proto, $ps, $pe, $action, $prio, $by);
             SELECT last_insert_rowid();
             """;
-        cmd.Parameters.AddWithValue("$sha", rule.AppSha256);
+        cmd.Parameters.AddWithValue("$sha", NormalizeHash(rule.AppSha256));
         cmd.Parameters.AddWithValue("$dir", rule.Direction == FirewallDirection.Inbound ? "inbound" : "outbound");
         cmd.Parameters.AddWithValue("$proto", rule.Protocol.ToString().ToLowerInvariant());
         cmd.Parameters.AddWithValue("$ps", (object?)rule.RemotePortStart ?? DBNull.Value);
@@ -105,7 +138,7 @@ public sealed class FirewallRuleStore
     public FirewallRule? FindBestMatch(string appSha256, FirewallDirection direction, FirewallProtocol protocol, int? remotePort)
     {
         return List()
-            .Where(r => r.AppSha256 == appSha256 && r.Direction == direction)
+            .Where(r => NormalizeHash(r.AppSha256) == NormalizeHash(appSha256) && r.Direction == direction)
             .Where(r => r.Protocol == FirewallProtocol.Any || r.Protocol == protocol)
             .Where(r => !remotePort.HasValue || !r.RemotePortStart.HasValue ||
                         (remotePort.Value >= r.RemotePortStart && remotePort.Value <= (r.RemotePortEnd ?? r.RemotePortStart)))

@@ -32,6 +32,17 @@ public sealed class ArchiveScanner
         _logger = logger;
     }
 
+    // Nhan dang zip theo NOI DUNG (4 magic byte dau), dung chung cho ca file
+    // tren dia lan buffer da giai nen tu mot entry — de hai duong khong the
+    // lech tieu chi nhan dang nhau duoc nua.
+    public static bool HasZipMagic(ReadOnlySpan<byte> header)
+    {
+        if (header.Length < 4) return false;
+        bool isLocalFileHeader = header[0] == 0x50 && header[1] == 0x4B && header[2] == 0x03 && header[3] == 0x04;
+        bool isEmptyArchive = header[0] == 0x50 && header[1] == 0x4B && header[2] == 0x05 && header[3] == 0x06;
+        return isLocalFileHeader || isEmptyArchive;
+    }
+
     // [SUA LOI] Truoc day chi kiem tra DUOI FILE ".zip" — sai voi file
     // metadata cua Windows Recycle Bin (vi du "$IXXXXXX.zip"): Windows giu
     // NGUYEN duoi cua file goc khi doi ten thanh $I... (ban ghi metadata
@@ -41,18 +52,24 @@ public sealed class ArchiveScanner
     // ("PK\x03\x04" hoac "PK\x05\x06") truoc khi coi la zip; neu khong
     // khop, de pipeline thong thuong (hash/heuristic) xu ly nhu mot file
     // binh thuong thay vi co ep phan tich nhu zip.
+    // [SUA LOI NGHIEM TRONG] Dong `if (!path.EndsWith(".zip"))` o dau ham da
+    // vo hieu hoa chinh ban sua ma comment tren mo ta: duoi file van la
+    // dieu kien QUYET DINH, magic byte chi duoc kiem tra SAU khi duoi da
+    // khop. Doi ten payload.zip -> payload.dat la toan bo module quet
+    // archive khong chay, va moi guard zip-bomb/do sau long nhau ben duoi
+    // khong bao gio duoc goi. Sua: chi kiem tra magic byte, KHONG xet duoi
+    // file. Chi phi la doc 4 byte dau moi file duoc quet — chap nhan duoc,
+    // va dung tinh chat "nhan dang theo noi dung, khong theo ten" ma phan
+    // con lai cua san pham dua vao.
     public static bool IsZipArchive(string path)
     {
-        if (!path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) return false;
         try
         {
             using var fs = File.OpenRead(path);
             Span<byte> header = stackalloc byte[4];
             int read = fs.Read(header);
             if (read < 4) return false;
-            bool isLocalFileHeader = header[0] == 0x50 && header[1] == 0x4B && header[2] == 0x03 && header[3] == 0x04;
-            bool isEmptyArchive = header[0] == 0x50 && header[1] == 0x4B && header[2] == 0x05 && header[3] == 0x06;
-            return isLocalFileHeader || isEmptyArchive;
+            return HasZipMagic(header);
         }
         catch
         {
@@ -122,24 +139,66 @@ public sealed class ArchiveScanner
             // Sua: tu doc theo chunk, dem SO BYTE THAT SU DA GIAI NEN, dung
             // NGAY LAP TUC khi vuot MaxTotalDecompressedBytes — khong bao
             // gio tin vao gia tri trong header truoc khi giai nen.
-            using var entryStream = entry.Open();
             using var ms = new MemoryStream();
             var buffer = new byte[CopyBufferSize];
             long entryBytesRead = 0;
-            int read;
-            while ((read = entryStream.Read(buffer, 0, buffer.Length)) > 0)
+            // [SUA LOI NGHIEM TRONG] Fix truoc chi bat InvalidDataException
+            // quanh vong doc entryStream.Read() — nhung entry.Open() cua .NET
+            // TU NO cung co the nem CHINH XAC exception nay ngay lap tuc, TRUOC
+            // ca Read() dau tien, neu LOCAL FILE HEADER cua entry bi hong (khac
+            // voi than deflate bi hong ma Read() phat hien). Da xac nhan bang
+            // test: pha hong 4-byte signature cua local file header (khong
+            // dung toi than du lieu nen) khien entry.Open() throw ma khong bi
+            // bat — bay thang qua foreach, bo qua Malicious dung sau, y het lop
+            // bug ma fix truoc do tuyen bo da sua nhung chua triet de. Sua: dua
+            // ca entry.Open() vao trong try nay.
+            //
+            // Dong thoi: neu loi xay ra GIUA CHUNG vong doc (sau khi mot so
+            // Read() DA THANH CONG va ghi duoc mot phan noi dung vao ms — vi du
+            // ke tan cong co y dat payload doc hai o DAU luong deflate roi CO Y
+            // pha hong PHAN CUOI de exception xay ra sau khi phan dau da giai
+            // nen xong), phan da giai nen THANH CONG do KHONG duoc vut bo ma
+            // khong quet — van dua qua _engine.ScanBuffer TRUOC khi coi entry
+            // la ScanError, tranh bo lot noi dung doc hai da nam tron trong
+            // doan giai nen duoc (dac biet voi phat hien theo pattern/YARA,
+            // khong can nguyen buffer khop hash tuyet doi).
+            InvalidDataException? corruption = null;
+            try
             {
-                entryBytesRead += read;
-                totalDecompressed += read;
-
-                if (totalDecompressed > MaxTotalDecompressedBytes)
+                using var entryStream = entry.Open();
+                int read;
+                while ((read = entryStream.Read(buffer, 0, buffer.Length)) > 0)
                 {
-                    return ZipBombVerdict("FLAG_SUSPICIOUS_ZIPBOMB",
-                        $"Vuot tran dung luong giai nen tuyet doi ({MaxTotalDecompressedBytes / (1024 * 1024)}MB) — " +
-                        $"phat hien TRONG LUC giai nen thuc te tai entry {SanitizeForLog(entry.FullName)}, khong dua vao metadata header");
-                }
+                    entryBytesRead += read;
+                    totalDecompressed += read;
 
-                ms.Write(buffer, 0, read);
+                    if (totalDecompressed > MaxTotalDecompressedBytes)
+                    {
+                        return ZipBombVerdict("FLAG_SUSPICIOUS_ZIPBOMB",
+                            $"Vuot tran dung luong giai nen tuyet doi ({MaxTotalDecompressedBytes / (1024 * 1024)}MB) — " +
+                            $"phat hien TRONG LUC giai nen thuc te tai entry {SanitizeForLog(entry.FullName)}, khong dua vao metadata header");
+                    }
+
+                    ms.Write(buffer, 0, read);
+                }
+            }
+            catch (InvalidDataException ex)
+            {
+                corruption = ex;
+            }
+
+            if (corruption is not null)
+            {
+                if (entryBytesRead > 0)
+                {
+                    var partialResult = _engine.ScanBuffer(ms.ToArray(), entry.FullName);
+                    if (partialResult.Verdict is ScanVerdict.Malicious or ScanVerdict.Suspicious)
+                    {
+                        return partialResult;
+                    }
+                }
+                pendingEntryError ??= new ScanResultDto { Verdict = ScanVerdict.ScanError, Stage = DetectionStage.IoError, Reason = $"[CORRUPT_ARCHIVE] Entry bi hong (local file header hoac du lieu nen) hoac khong dung dinh dang — entry {SanitizeForLog(entry.FullName)}" };
+                continue;
             }
 
             // Ty le nen: dung so byte DA GIAI NEN THAT SU (entryBytesRead)
@@ -164,36 +223,111 @@ public sealed class ArchiveScanner
                 }
             }
 
-            if (entry.FullName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            // [SUA LOI NGHIEM TRONG — GUARD DUNG, TRUOC DAY AP THIEU DUONG]
+            // IsZipArchive o tren da duoc sua bo hoan toan viec xet duoi file,
+            // voi ly do dung: "nhan dang theo noi dung, khong theo ten". Nhung
+            // dong nay — nhanh archive LONG NHAU — van la
+            // `entry.FullName.EndsWith(".zip")`, tuc la chinh xac cai bug da
+            // duoc sua o vong ngoai, con nguyen o vong trong.
+            // Hau qua: doi ten payload.zip thanh payload.dat TRUOC KHI dong
+            // goi vao archive ngoai la du de qua mat. Zip long nhau do khong
+            // bao gio duoc giai nen de quet; noi dung cua no chi di qua
+            // _engine.ScanBuffer nhu mot khoi byte nen — nen moi mau ben trong
+            // deu vo hinh voi ca hash signature lan YARA. Va vi khong recurse,
+            // ca guard do-sau-long-nhau cung khong bao gio duoc tinh.
+            // Sua: dung CHUNG tieu chi nhan dang voi vong ngoai (magic byte
+            // tren noi dung DA GIAI NEN), khong xet duoi file.
+            var entryBytes = ms.ToArray();
+
+            // [SUA LOI NGHIEM TRONG] TRUOC DAY day la mot if/else loai tru:
+            // noi dung nao co magic zip thi CHI di vao nhanh de quy, con
+            // ScanBuffer (hash + YARA + heuristic) nam trong nhanh `else` va
+            // KHONG BAO GIO chay cho no. HasZipMagic nhan CA "PK"
+            // (End Of Central Directory cua archive rong) — nen chi can dat
+            // 4 byte do o dau payload la du de noi dung di het vao
+            // ScanZipRecursive: ZipFile.OpenRead hoac thay 0 entry (tra ve
+            // Clean) hoac nem InvalidDataException (tra ve ScanError), va
+            // KHONG mot byte nao cua payload duoc dua qua engine. Mot ngo cut
+            // hoan chinh cho toan bo tang phat hien, dat sau chinh cai guard
+            // vua duoc sua o vong ngoai.
+            //
+            // Sua: bo tinh loai tru. Noi dung THO cua entry LUON di qua
+            // ScanBuffer; viec de quy vao archive long nhau la mot buoc quet
+            // BO SUNG, khong phai buoc thay the.
+            var rawResult = _engine.ScanBuffer(entryBytes, entry.FullName);
+            var rawShortCircuit = MergeEntryVerdict(rawResult, ref pendingEntryError);
+            if (rawShortCircuit is not null) return rawShortCircuit;
+
+            if (HasZipMagic(entryBytes))
             {
                 var nestedTemp = Path.GetTempFileName();
                 try
                 {
-                    File.WriteAllBytes(nestedTemp, ms.ToArray());
-                    var nestedResult = ScanZipRecursive(nestedTemp, depth + 1, ref totalDecompressed);
-                    if (nestedResult.Verdict != ScanVerdict.Clean) return nestedResult;
+                    File.WriteAllBytes(nestedTemp, entryBytes);
+                    // [SUA LOI NGHIEM TRONG] TRUOC DAY neu zip long nhau bi
+                    // HONG THAT SU (ZipFile.OpenRead() nem InvalidDataException
+                    // o dong dau ScanZipRecursive), exception nay KHONG duoc
+                    // bat o day — no bay thang qua vong lap foreach, bo qua
+                    // MOI entry con lai (ke ca file Malicious dung sau), va
+                    // chi bi bat o ScanZip() ngoai cung, bien toan bo ket qua
+                    // thanh ScanError. Sua: bat InvalidDataException tai day,
+                    // coi nhu mot ScanError cua rieng entry nay (giong nhanh
+                    // ScanVerdict.ScanError ben duoi) va CHO vong lap tiep tuc
+                    // voi cac entry con lai thay vi de loi thoat het ca ham.
+                    ScanResultDto nestedResult;
+                    try
+                    {
+                        nestedResult = ScanZipRecursive(nestedTemp, depth + 1, ref totalDecompressed);
+                    }
+                    catch (InvalidDataException)
+                    {
+                        nestedResult = new ScanResultDto { Verdict = ScanVerdict.ScanError, Stage = DetectionStage.IoError, Reason = $"[CORRUPT_ARCHIVE] Zip long nhau bi hong hoac khong dung dinh dang — entry {SanitizeForLog(entry.FullName)}" };
+                    }
+                    // [SUA LOI NGHIEM TRONG] TRUOC DAY bat ky verdict khac
+                    // Clean nao tu nhanh zip-long-nhau (ke ca ScanError) deu
+                    // return NGAY LAP TUC, khac voi vong lap entry truc tiep
+                    // ben duoi (da duoc sua de KHONG return som khi gap
+                    // ScanError). Hau qua: neu mot zip long nhau bi HONG xuat
+                    // hien TRUOC mot file Malicious khac trong CUNG archive,
+                    // ham thoat ngay voi ScanError va khong bao gio quet toi
+                    // file Malicious do — bo lot ma dua bao la loi doc file.
+                    // Sua: Malicious/Suspicious van uu tien tra ve ngay (nhu
+                    // cu); ScanError chi duoc GHI NHAN LAI (uu tien cai dau
+                    // tien) va vong lap TIEP TUC voi cac entry con lai —
+                    // giong het cach vong lap entry truc tiep xu ly (dung
+                    // chung qua MergeEntryVerdict, xem ghi chu tai do).
+                    var shortCircuit = MergeEntryVerdict(nestedResult, ref pendingEntryError);
+                    if (shortCircuit is not null) return shortCircuit;
                 }
                 finally
                 {
                     File.Delete(nestedTemp);
                 }
             }
-            else
-            {
-                var entryResult = _engine.ScanBuffer(ms.ToArray(), entry.FullName);
-                if (entryResult.Verdict is ScanVerdict.Malicious or ScanVerdict.Suspicious)
-                {
-                    return entryResult;
-                }
-                if (entryResult.Verdict == ScanVerdict.ScanError)
-                {
-                    pendingEntryError ??= entryResult;
-                }
-            }
         }
 
         return pendingEntryError
             ?? new ScanResultDto { Verdict = ScanVerdict.Clean, Stage = DetectionStage.None, Reason = "File nen sach qua kiem tra zip-bomb va quet noi dung" };
+    }
+
+    // [TAI CAU TRUC] Logic uu tien verdict (Malicious/Suspicious short-circuit
+    // return ngay; ScanError chi ghi nhan lai cai DAU TIEN roi cho vong lap
+    // tiep tuc) truoc day bi lap y het giua nhanh zip-long-nhau va nhanh entry
+    // thuong — rui ro: sua thu tu uu tien trong tuong lai de chi sua mot nhanh
+    // roi quen nhanh kia, gay lech hanh vi am tham. Gop chung mot noi. Tra ve
+    // non-null nghia la "caller phai return NGAY gia tri nay"; null nghia la
+    // "da xu ly xong (co the da ghi pendingEntryError), cho vong lap tiep tuc".
+    private static ScanResultDto? MergeEntryVerdict(ScanResultDto result, ref ScanResultDto? pendingEntryError)
+    {
+        if (result.Verdict is ScanVerdict.Malicious or ScanVerdict.Suspicious)
+        {
+            return result;
+        }
+        if (result.Verdict == ScanVerdict.ScanError)
+        {
+            pendingEntryError ??= result;
+        }
+        return null;
     }
 
     // [SUA LOI, nhe] entry.FullName trong file zip do NGUOI TAO ZIP tu khai

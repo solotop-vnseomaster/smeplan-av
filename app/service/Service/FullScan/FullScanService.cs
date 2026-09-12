@@ -65,6 +65,20 @@ public sealed class FullScanService
     private volatile bool _paused;
     private Task? _runningTask;
 
+    // [SUA LOI NGHIEM TRONG] Start() truoc day la check-then-act KHONG khoa
+    // (doc _progress.Status roi vai dong sau moi gan lai) — Start() duoc goi
+    // ca tu HTTP request lan tu UsbMonitorService (nen, khi cam USB moi) nen
+    // hai lan goi gan nhu dong thoi tu 2 luong khac nhau co the CUNG vuot qua
+    // check truoc khi luong nao kip gan Status=Running, dan den 2 RunScan
+    // chay song song (de _cts/_runningTask, tien do tron lan, 1 file co the
+    // bi quarantine 2 lan). Khoa toan bo doan check-then-act + khoi tao
+    // trang thai bang 1 lock de dam bao chi mot Start() thanh cong tai mot
+    // thoi diem. Pause()/Resume() cung dung chung lock nay va kiem tra
+    // Status HIEN TAI truoc khi chuyen trang thai, tranh "Resume ma" (goi
+    // Resume() khi chua tung Start() se KHONG con tao Status=Running gia,
+    // ma tra ve false).
+    private readonly object _stateLock = new();
+
     // Gioi han so muc luu lai de tranh phinh to bo nho tren mot lan quet
     // toan o dia rat nhieu file bi gan co (truong hop hiem, nhung van can
     // gioi han an toan).
@@ -95,54 +109,94 @@ public sealed class FullScanService
 
     public bool Start(string volumeRoot)
     {
-        if (_progress.Status == FullScanStatus.Running) return false;
+        lock (_stateLock)
+        {
+            // [SUA LOI NGHIEM TRONG] TRUOC DAY chi chan khi Status ==
+            // Running, KHONG chan Paused. Trong luc Paused, task nen cu VAN
+            // CON SONG (dang block o vong lap "while (_paused) Thread.Sleep")
+            // cho toi khi Resume()/Cancel(). Goi Start() luc nay (nguoi dung
+            // doi o dia, hoac UsbMonitorService tu dong quet khi cam USB moi
+            // dung luc dang pause) van vuot qua check nay, gan lai _cts/
+            // _runningTask MOI va dat _paused = false — dong thoi danh thuc
+            // LUON task cu (vi _paused la field DUNG CHUNG toan service) ->
+            // hai RunScan() chay song song, cung ghi de _progress/
+            // _flaggedItems dung chung, so lieu malware/scanned bi tron lan
+            // giua 2 lan quet. Sua: chan Start() khi dang Running HOAC
+            // Paused — phai Cancel() (bo han) truoc khi bat dau lan quet moi.
+            if (_progress.Status == FullScanStatus.Running || _progress.Status == FullScanStatus.Paused) return false;
 
-        _cts = new CancellationTokenSource();
-        _paused = false;
-        _progress.Status = FullScanStatus.Running;
-        _progress.Volume = volumeRoot;
-        _progress.FilesScanned = 0;
-        _progress.MaliciousCount = 0;
-        _progress.SuspiciousCount = 0;
-        _progress.ErrorCount = 0;
-        _progress.CachedCount = 0;
-        _progress.StartedAt = DateTimeOffset.UtcNow;
-        _progress.FinishedAt = null;
-        // [SUA LOI] TRUOC DAY chi reset _cachedBacking — 4 backing field con
-        // lai (_filesScannedBacking, _maliciousBacking, _suspiciousBacking,
-        // _errorBacking) KHONG duoc dua ve 0. _progress.XxxCount o tren tuy
-        // duoc gan = 0 ngay tai day, nhung ngay sau do ScanOneFile lai gan
-        // _progress.XxxCount = _xxxBacking (backing van con gia tri TICH
-        // LUY tu (cac) lan quet TRUOC), khien so lieu hien thi tu lan quet
-        // thu 2 tro di bi LECH PHA (cao hon thuc te, cong don qua nhieu lan
-        // quet) ngay ca khi UI vua duoc reset ve 0. Sua: reset toan bo 5
-        // backing field, khong chi mot.
-        _filesScannedBacking = 0;
-        _maliciousBacking = 0;
-        _suspiciousBacking = 0;
-        _errorBacking = 0;
-        _cachedBacking = 0;
-        _flaggedItems.Clear();
+            _cts = new CancellationTokenSource();
+            _paused = false;
+            _progress.Status = FullScanStatus.Running;
+            _progress.Volume = volumeRoot;
+            _progress.FilesScanned = 0;
+            _progress.MaliciousCount = 0;
+            _progress.SuspiciousCount = 0;
+            _progress.ErrorCount = 0;
+            _progress.CachedCount = 0;
+            _progress.StartedAt = DateTimeOffset.UtcNow;
+            _progress.FinishedAt = null;
+            // [SUA LOI] TRUOC DAY chi reset _cachedBacking — 4 backing field con
+            // lai (_filesScannedBacking, _maliciousBacking, _suspiciousBacking,
+            // _errorBacking) KHONG duoc dua ve 0. _progress.XxxCount o tren tuy
+            // duoc gan = 0 ngay tai day, nhung ngay sau do ScanOneFile lai gan
+            // _progress.XxxCount = _xxxBacking (backing van con gia tri TICH
+            // LUY tu (cac) lan quet TRUOC), khien so lieu hien thi tu lan quet
+            // thu 2 tro di bi LECH PHA (cao hon thuc te, cong don qua nhieu lan
+            // quet) ngay ca khi UI vua duoc reset ve 0. Sua: reset toan bo 5
+            // backing field, khong chi mot.
+            _filesScannedBacking = 0;
+            _maliciousBacking = 0;
+            _suspiciousBacking = 0;
+            _errorBacking = 0;
+            _cachedBacking = 0;
+            _flaggedItems.Clear();
 
-        _runningTask = Task.Run(() => RunScan(volumeRoot, _cts.Token));
-        return true;
+            _runningTask = Task.Run(() => RunScan(volumeRoot, _cts.Token));
+            return true;
+        }
     }
 
-    public void Pause()
+    // [SUA LOI NGHIEM TRONG] Truoc day Pause()/Resume() gan Status vo dieu
+    // kien, khong kiem tra trang thai hien tai. Goi Resume() khi dang Idle
+    // (chua tung Start()) se tao Status=Running "ma" — khong co RunScan nao
+    // thuc su chay, Cancel() sau do vo tac dung (_cts van null), va Start()
+    // tiep theo se bi chan vinh vien (Status van la Running) cho toi khi vo
+    // tinh goi Pause() de "sua". Ca hai gio deu tra ve bool va CHI chuyen
+    // trang thai tu dung tien de: Pause() chi tu Running, Resume() chi tu
+    // Paused — moi truong hop khac la no-op, tra ve false.
+    public bool Pause()
     {
-        _paused = true;
-        _progress.Status = FullScanStatus.Paused;
+        lock (_stateLock)
+        {
+            if (_progress.Status != FullScanStatus.Running) return false;
+            _paused = true;
+            _progress.Status = FullScanStatus.Paused;
+            return true;
+        }
     }
 
-    public void Resume()
+    public bool Resume()
     {
-        _paused = false;
-        _progress.Status = FullScanStatus.Running;
+        lock (_stateLock)
+        {
+            if (_progress.Status != FullScanStatus.Paused) return false;
+            _paused = false;
+            _progress.Status = FullScanStatus.Running;
+            return true;
+        }
     }
 
     public void Cancel()
     {
-        _cts?.Cancel();
+        // [SUA LOI] TRUOC DAY doc _cts ngoai _stateLock — neu Cancel() (nham
+        // huy scan CU) chay dung luc Start() (dang khoi tao scan MOI) vua gan
+        // _cts moi duoi lock, Cancel() co the doc duoc _cts MOI va huy nham
+        // scan vua bat dau thay vi scan dinh huy. Doc duoi cung mot lock voi
+        // Start()/Pause()/Resume() de dam bao thay mot _cts nhat quan.
+        CancellationTokenSource? cts;
+        lock (_stateLock) { cts = _cts; }
+        cts?.Cancel();
     }
 
     // NFR-AVAIL-04: quyet dinh loai file he thong dung de xac dinh nhanh
@@ -535,7 +589,12 @@ public sealed class FullScanService
         {
             try
             {
-                result = _cache.TryGetCached(path, fileInfo.LastWriteTimeUtc.Ticks, fileInfo.Length, currentSigVersion);
+                // Xem ScanCacheStore.TryGetCached: phai doi chieu HASH NOI
+                // DUNG, khong duoc tin metadata (mtime/size deu sua duoc
+                // bang quyen nguoi dung thuong).
+                result = _cache.TryGetCached(
+                    path, fileInfo.LastWriteTimeUtc.Ticks, fileInfo.Length, currentSigVersion,
+                    _engine.Sha256File(path));
             }
             catch
             {
@@ -576,8 +635,30 @@ public sealed class FullScanService
             case ScanVerdict.Malicious:
                 Interlocked.Increment(ref _maliciousBacking);
                 _progress.MaliciousCount = _maliciousBacking;
-                try { _quarantine.QuarantineFile(path, result.Sha256Hex, result.Reason); } catch { /* file co the da bi xoa/di chuyen */ }
-                AddFlaggedItem(path, result);
+                // [SUA LOI CAO] Xem ghi chu cung noi dung tai
+                // DownloadsWatcherService: catch {} im lang o day khien mot
+                // file DOC KHONG cach ly duoc van duoc dem vao MaliciousCount
+                // va hien trong danh sach "da xu ly", trong khi no con nguyen
+                // tren dia. Ket qua that phai di theo ket qua quet.
+                try
+                {
+                    _quarantine.QuarantineFile(path, result.Sha256Hex, result.Reason);
+                    AddFlaggedItem(path, result);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "KHONG quarantine duoc {Path} — file VAN CON tren dia", path);
+                    _audit.Log("scan",
+                        $"MALICIOUS nhung KHONG quarantine duoc: {path} — file VAN CON TREN DIA ({ex.GetType().Name}: {ex.Message})",
+                        result);
+                    AddFlaggedItem(path, new ScanResultDto
+                    {
+                        Verdict = result.Verdict,
+                        Stage = result.Stage,
+                        Sha256Hex = result.Sha256Hex,
+                        Reason = result.Reason + " [KHONG CACH LY DUOC — FILE VAN CON TREN DIA]",
+                    });
+                }
                 break;
             case ScanVerdict.Suspicious:
                 Interlocked.Increment(ref _suspiciousBacking);
