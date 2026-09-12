@@ -90,6 +90,10 @@ builder.Services.AddSingleton(new RuleStore(DataPaths.RulesDbPath));
 builder.Services.AddSingleton(new QuarantineStore(DataPaths.QuarantineDbPath));
 builder.Services.AddSingleton<QuarantineManager>();
 builder.Services.AddSingleton<PermissionRequestBroker>();
+// Cache dung CHUNG cho moi lan danh gia: mot binary duoc bam va xac minh chu
+// ky mot lan, cac lan chay sau chi tra ve ket qua da co. Dang ky o tang DI de
+// no that su dung chung, khong phai moi instance mot cache rieng.
+builder.Services.AddSingleton<FileIdentityCache>();
 builder.Services.AddSingleton<ProcessTrustEngine>();
 builder.Services.AddSingleton<DownloadsDecisionBroker>();
 builder.Services.AddSingleton(new ScanCacheStore(DataPaths.ScanCacheDbPath));
@@ -443,7 +447,14 @@ app.MapPost("/api/trust/evaluate", async (ProcessTrustEngine trust, TrustEvaluat
     return Results.Ok(result);
 });
 
-app.MapGet("/api/permission-requests", (PermissionRequestBroker broker) => Results.Ok(broker.ListPending()));
+// Lan poll nay CHINH LA tin hieu "giao dien dang mo". ProcessTrustEngine doc
+// no de quyet dinh co hoi nguoi dung hay khong — hoi khi khong ai nhin man
+// hinh chi tao ra hop thoai chong dong va nhung khoang cho 30 giay vo nghia.
+app.MapGet("/api/permission-requests", (PermissionRequestBroker broker) =>
+{
+    broker.MarkUiPolled();
+    return Results.Ok(broker.ListPending());
+});
 app.MapPost("/api/permission-requests/{id}/respond", (PermissionRequestBroker broker, AuditLogger auditLogger, string id, RespondRequest req) =>
 {
     if (!Enum.TryParse<UserPermissionChoice>(req.Choice, true, out var choice))

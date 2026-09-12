@@ -1,6 +1,6 @@
 # Detection-quality eval report — scan_engine.dll
 
-Chay luc: 2026-09-06 13:43:33 UTC
+Chay luc: 2026-09-12 13:10:05 UTC
 
 Pham vi: eval nay do CHAT LUONG PHAT HIEN cua chinh scan_engine.dll da
 bien dich (Debug), goi qua dung lop P/Invoke san xuat (ScanEngineService),
@@ -14,28 +14,28 @@ va FullScanServiceTests.
 | Detection rate — nhanh hash-signature (16 mau, gom EICAR chuan) | 100.0% (16/16) |
 | Detection rate — nhanh heuristic (PE tong hop, entry-point-ngoai-section + IAT injection combo) | 100.0% (1/1) |
 | False-positive rate — tap file sach gia lap (10 mau) | 0.0% (0/10) |
-| Thoi gian quet trung binh moi mau | 0.027 ms |
+| Thoi gian quet trung binh moi mau | 0.028 ms |
 
 ## Nhanh hash-signature (ky vong Malicious / stage=HashSignature)
 
 | Mau | Verdict | Stage | Score | Thoi gian (ms) | Ket qua | Ghi chu |
 |---|---|---|---|---|---|---|
-| EICAR-standard-test-file | Malicious | HashSignature | 0 | 0.011 | PASS |  |
+| EICAR-standard-test-file | Malicious | HashSignature | 0 | 0.010 | PASS |  |
 | synthetic-hash-sample-00 | Malicious | HashSignature | 0 | 0.009 | PASS |  |
-| synthetic-hash-sample-01 | Malicious | HashSignature | 0 | 0.005 | PASS |  |
+| synthetic-hash-sample-01 | Malicious | HashSignature | 0 | 0.004 | PASS |  |
 | synthetic-hash-sample-02 | Malicious | HashSignature | 0 | 0.004 | PASS |  |
 | synthetic-hash-sample-03 | Malicious | HashSignature | 0 | 0.003 | PASS |  |
-| synthetic-hash-sample-04 | Malicious | HashSignature | 0 | 0.004 | PASS |  |
-| synthetic-hash-sample-05 | Malicious | HashSignature | 0 | 0.004 | PASS |  |
+| synthetic-hash-sample-04 | Malicious | HashSignature | 0 | 0.003 | PASS |  |
+| synthetic-hash-sample-05 | Malicious | HashSignature | 0 | 0.003 | PASS |  |
 | synthetic-hash-sample-06 | Malicious | HashSignature | 0 | 0.004 | PASS |  |
 | synthetic-hash-sample-07 | Malicious | HashSignature | 0 | 0.003 | PASS |  |
 | synthetic-hash-sample-08 | Malicious | HashSignature | 0 | 0.003 | PASS |  |
 | synthetic-hash-sample-09 | Malicious | HashSignature | 0 | 0.003 | PASS |  |
-| synthetic-hash-sample-10 | Malicious | HashSignature | 0 | 0.004 | PASS |  |
-| synthetic-hash-sample-11 | Malicious | HashSignature | 0 | 0.004 | PASS |  |
-| synthetic-hash-sample-12 | Malicious | HashSignature | 0 | 0.005 | PASS |  |
-| synthetic-hash-sample-13 | Malicious | HashSignature | 0 | 0.004 | PASS |  |
-| synthetic-hash-sample-14 | Malicious | HashSignature | 0 | 0.004 | PASS |  |
+| synthetic-hash-sample-10 | Malicious | HashSignature | 0 | 0.003 | PASS |  |
+| synthetic-hash-sample-11 | Malicious | HashSignature | 0 | 0.003 | PASS |  |
+| synthetic-hash-sample-12 | Malicious | HashSignature | 0 | 0.004 | PASS |  |
+| synthetic-hash-sample-13 | Malicious | HashSignature | 0 | 0.003 | PASS |  |
+| synthetic-hash-sample-14 | Malicious | HashSignature | 0 | 0.003 | PASS |  |
 
 ## Nhanh heuristic (ky vong Suspicious / stage=Heuristic, score>=100)
 
@@ -47,16 +47,16 @@ va FullScanServiceTests.
 
 | Mau | Verdict | Stage | Score | Thoi gian (ms) | Ket qua | Ghi chu |
 |---|---|---|---|---|---|---|
-| plaintext-vi | Clean | None | 0 | 0.009 | PASS |  |
+| plaintext-vi | Clean | None | 0 | 0.007 | PASS |  |
 | plaintext-en | Clean | None | 0 | 0.005 | PASS |  |
 | json-config | Clean | None | 0 | 0.005 | PASS |  |
 | csv-data | Clean | None | 0 | 0.005 | PASS |  |
 | empty-file | Clean | None | 0 | 0.003 | PASS |  |
 | tiny-file | Clean | None | 0 | 0.003 | PASS |  |
-| repeating-pattern-low-entropy | Clean | None | 0 | 0.467 | PASS |  |
+| repeating-pattern-low-entropy | Clean | None | 0 | 0.478 | PASS |  |
 | markdown-doc | Clean | None | 0 | 0.069 | PASS |  |
 | synthetic-benign-pe (negative control) | Clean | None | 0 | 0.011 | PASS |  |
-| high-entropy-non-pe-blob (negative control) | Clean | None | 15 | 0.069 | PASS |  |
+| high-entropy-non-pe-blob (negative control) | Clean | None | 15 | 0.070 | PASS |  |
 
 ## Ghi chu / gioi han cua eval nay
 

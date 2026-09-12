@@ -27,17 +27,22 @@ public sealed class ProcessTrustEngine
     };
 
     private readonly RuleStore _rules;
+    private readonly FileIdentityCache _identityCache;
     private readonly PermissionRequestBroker _broker;
     private readonly AuditLogger _audit;
     private readonly ILogger<ProcessTrustEngine> _logger;
 
+    // identityCache co the bo trong o test cu — khi do dung mot cache rieng
+    // cho instance nay, nen hanh vi khong doi, chi mat loi ich dung chung.
     public ProcessTrustEngine(RuleStore rules, PermissionRequestBroker broker, AuditLogger audit,
-        ILogger<ProcessTrustEngine> logger, TimeSpan? userDecisionTimeout = null)
+        ILogger<ProcessTrustEngine> logger, TimeSpan? userDecisionTimeout = null,
+        FileIdentityCache? identityCache = null)
     {
         _rules = rules;
         _broker = broker;
         _audit = audit;
         _logger = logger;
+        _identityCache = identityCache ?? new FileIdentityCache();
         _userDecisionTimeout = userDecisionTimeout ?? TimeSpan.FromSeconds(30);
     }
 
@@ -101,12 +106,39 @@ public sealed class ProcessTrustEngine
                 "Khong tim thay file thuc thi tren dia — tu choi mac dinh (an toan hon allow mu)");
         }
 
-        var sha256 = ComputeSha256(processPath);
-        // Xem ghi chu tai AuthenticodeVerifier.VerifyAsync: bao deadline
-        // cung quanh WinVerifyTrust (revocation check qua mang khong
-        // timeout) de mot process moi khoi chay khong bi treo vo thoi han
-        // khi mang cham/proxy chan.
-        var authenticode = await AuthenticodeVerifier.VerifyAsync(processPath, TimeSpan.FromSeconds(5), ct);
+        // [SUA LOI HIEU NANG] Hai viec ton kem nhat cua ca ham nay — bam
+        // SHA-256 toan bo file va tra chu ky (ke ca tra catalog he thong) —
+        // deu chi phu thuoc vao NOI DUNG FILE, nen duoc cache theo
+        // (duong dan, kich thuoc, mtime). Xem FileIdentityCache de biet vi sao
+        // cache dung o day ma KHONG cache quyet dinh cho/chan.
+        //
+        // Truoc day khong co cache: mot cong cu phat trien sinh node.exe (90 MB,
+        // 209 ms moi lan bam) hang tram lan trong mot phien lam viec la hang
+        // chuc giay CPU chi de bam lai dung mot file khong doi.
+        string sha256;
+        AuthenticodeResult authenticode;
+        if (_identityCache.TryGet(processPath, out var cached))
+        {
+            sha256 = cached.Sha256;
+            authenticode = cached.Authenticode;
+        }
+        else
+        {
+            sha256 = ComputeSha256(processPath);
+            // Xem ghi chu tai AuthenticodeVerifier.VerifyAsync: bao deadline
+            // cung quanh WinVerifyTrust (revocation check qua mang khong
+            // timeout) de mot process moi khoi chay khong bi treo vo thoi han
+            // khi mang cham/proxy chan.
+            authenticode = await AuthenticodeVerifier.VerifyAsync(processPath, TimeSpan.FromSeconds(5), ct);
+
+            // CHI cache khi da co ket luan chac chan ve chuoi chung thu. Neu
+            // lan nay het deadline (mang cham/CRL bi chan), cache lai nghia la
+            // dong bang mot ket qua "chua ket luan duoc" cho moi lan chay sau.
+            if (authenticode.ChainVerificationCompleted && !string.IsNullOrEmpty(sha256))
+            {
+                _identityCache.Set(processPath, new FileIdentity(sha256, authenticode));
+            }
+        }
         bool isMicrosoftPublisher = AuthenticodeVerifier.IsMicrosoftPublisher(authenticode.PublisherName);
         bool inTrustedDirectory = IsInTrustedDirectory(processPath);
 
@@ -203,6 +235,35 @@ public sealed class ProcessTrustEngine
 
         // Unknown -> PendingUserDecision: khong dat trusted-by-default va
         // khong co rule nao ca hash lan publisher.
+        //
+        // [SUA LOI CHAN MAY LAM VIEC] Chi hoi khi viec hoi CO NGHIA. Xem
+        // PermissionRequestBroker.CanPromptUser: giao dien phai dang mo VA
+        // hang doi cho chua qua tai.
+        //
+        // TRUOC DAY moi tien trinh la deu sinh mot yeu cau, ke ca khi khong ai
+        // nhin man hinh. Tren may dang lam viec dieu do tao ra mua hop thoai —
+        // moi lan build lai sinh mot loat tien trinh moi, nguoi dung bam khong
+        // kip, va moi yeu cau con giu mot cho cho 30 giay.
+        //
+        // Day KHONG phai noi long bao mat. Ket qua cu cua nhanh nay la
+        // DeniedByTimeout, va DriverSimulatorService da duoc sua de KHONG giet
+        // tien trinh tren mot ket qua khong-ket-luan-duoc. Nen hanh vi thuc te
+        // truoc va sau la nhu nhau — chi khac la khong con 30 giay cho vo nghia
+        // va khong con hop thoai khong ai tra loi. Su kien van duoc ghi audit
+        // va day len Trung tam canh bao de nguoi dung xem lai khi ranh.
+        if (!_broker.CanPromptUser)
+        {
+            _audit.Log("process-trust",
+                $"KHONG hoi nguoi dung cho {processPath}: giao dien khong mo hoac hang doi cho da day. " +
+                "Tien trinh duoc chay tiep va ghi nhan de xem lai.",
+                new { pid, sha256, uiListening = _broker.IsUiListening });
+
+            return Finish(sw, processPath, pid, sha256, authenticode,
+                ProcessTrustState.AllowedNoUserPresent, true,
+                "Chua co rule cho tien trinh nay va khong co giao dien nao dang mo de hoi — " +
+                "cho chay tiep va ghi nhan, KHONG chan mu");
+        }
+
         _audit.Log("process-trust", $"Cho nguoi dung quyet dinh cho tien trinh: {processPath}",
             new { pid, sha256 });
 

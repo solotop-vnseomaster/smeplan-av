@@ -21,6 +21,38 @@ public sealed class PermissionRequestBroker
 {
     private readonly ConcurrentDictionary<string, (PendingPermissionRequest Request, TaskCompletionSource<UserPermissionChoice> Tcs)> _pending = new();
 
+    // [SUA LOI CHAN MAY LAM VIEC] Hai co de ProcessTrustEngine biet co NEN hoi
+    // nguoi dung hay khong.
+    //
+    // TRUOC DAY moi tien trinh la deu sinh mot yeu cau xin quyen, bat ke co ai
+    // dang nhin man hinh hay khong. Tren may dang lam viec, dieu do tao ra mot
+    // con mua hop thoai: moi lan build lai sinh mot loat tien trinh moi, nguoi
+    // dung bam khong kip, hop thoai chong len nhau, va moi yeu cau con giu mot
+    // cho cho 30 giay.
+    //
+    // Giai phap khong phai la bo hoi, ma la chi hoi khi viec hoi CO NGHIA:
+    //   1. Giao dien phai dang mo (no poll endpoint nay, xem MarkUiPolled).
+    //   2. Khong duoc co qua nhieu yeu cau dang cho cung luc — neu hang doi da
+    //      day thi nguoi dung ro rang khong theo kip, hoi them chi lam te hon.
+
+    // Giao dien poll GET /api/permission-requests moi ~1,5 giay. Coi la "dang
+    // mo" neu co lan poll trong 10 giay gan day — rong rai hon nhip poll nhieu
+    // lan de mot lan tre mang/GC khong bi hieu nham thanh da dong giao dien.
+    private static readonly TimeSpan UiPresenceWindow = TimeSpan.FromSeconds(10);
+
+    // Nhieu hon con so nay thi nguoi dung khong the theo kip.
+    private const int MaxConcurrentPending = 3;
+
+    private long _lastUiPollTicks;
+
+    public void MarkUiPolled() => Interlocked.Exchange(ref _lastUiPollTicks, DateTime.UtcNow.Ticks);
+
+    public bool IsUiListening =>
+        DateTime.UtcNow - new DateTime(Interlocked.Read(ref _lastUiPollTicks), DateTimeKind.Utc) < UiPresenceWindow;
+
+    // Chi nen hoi khi giao dien dang mo VA hang doi chua qua tai.
+    public bool CanPromptUser => IsUiListening && _pending.Count < MaxConcurrentPending;
+
     public event Action<PendingPermissionRequest>? RequestCreated;
 
     public async Task<UserPermissionChoice?> RequestDecisionAsync(

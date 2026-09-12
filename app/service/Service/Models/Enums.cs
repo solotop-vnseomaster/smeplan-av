@@ -31,7 +31,14 @@ public enum ProcessTrustState
     AllowedAlways = 5,
     AllowedOnce = 6,
     Blocked = 7,
-    DeniedByTimeout = 8
+    DeniedByTimeout = 8,
+
+    // [SUA LOI CHAN MAY LAM VIEC] Chua co rule cho tien trinh nay VA khong co
+    // giao dien nao dang mo de hoi. Khac han DeniedByTimeout ("da hoi, khong
+    // ai tra loi"): o day khong he hoi, vi hoi vao hu khong chi tao hop thoai
+    // chong dong va nhung khoang cho 30 giay vo nghia.
+    // Tien trinh duoc chay tiep va ghi nhan — xem ProcessTrustEngine.
+    AllowedNoUserPresent = 9
 }
 
 // business-rules/05-nghiep-vu.md muc "File trong Quarantine"

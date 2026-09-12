@@ -23,6 +23,19 @@ public class ProcessTrustEngineTests : IDisposable
         _dbPath = Path.Combine(Path.GetTempPath(), $"avtest_trust_{Guid.NewGuid():N}.db");
         _rules = new RuleStore(_dbPath);
         _broker = new PermissionRequestBroker();
+
+        // [CAP NHAT TEST — KHONG PHAI NOI LONG] ProcessTrustEngine gio chi hoi
+        // nguoi dung khi giao dien DANG MO (xem PermissionRequestBroker.
+        // CanPromptUser). Do la ban sua cho su co AV lam nghet may dang lam
+        // viec: truoc day moi tien trinh la deu sinh mot hop thoai roi cho 30
+        // giay, ke ca khi khong ai nhin man hinh.
+        //
+        // Cac test trong file nay kiem chung LUONG HOI NGUOI DUNG, nen chung
+        // phai dung tien de do len: coi nhu giao dien vua poll. Khong lam vay
+        // thi chung do vi mot ly do khac han voi thu chung dinh kiem tra.
+        // Hanh vi khi KHONG co giao dien duoc kiem rieng o
+        // ProcessTrustPerformanceTests.
+        _broker.MarkUiPolled();
         _audit = new AuditLogger(Path.Combine(Path.GetTempPath(), $"avtest_audit_{Guid.NewGuid():N}.jsonl"));
 
         // Mot file "thuc thi" gia, khong ky so, khong nam trong thu muc

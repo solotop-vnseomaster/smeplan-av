@@ -22,6 +22,19 @@ public sealed class DriverSimulatorService : BackgroundService
     private readonly ILogger<DriverSimulatorService> _logger;
     private ManagementEventWatcher? _watcher;
 
+    // [SUA LOI CHAN MAY LAM VIEC] Gioi han so lan danh gia chay dong thoi.
+    //
+    // OnProcessStarted la `async void` duoc WMI goi cho MOI tien trinh moi.
+    // TRUOC DAY khong co gioi han nao: mot lenh build sinh hang chuc tien
+    // trinh trong tich tac thi bay nhieu lan bam SHA-256 + tra chu ky chay
+    // song song, tranh nhau dia va CPU voi chinh cong viec cua nguoi dung.
+    // Nghich ly la cang nhieu tien trinh cung luc — dung luc may ban nhat —
+    // thi tang bao ve nay cang lam may cham hon.
+    //
+    // Bon luot song song la du de khong bo sot su kien WMI ma khong bien tang
+    // nay thanh nguon tai chinh. Cac luot vuot qua se xep hang, khong bi bo.
+    private readonly SemaphoreSlim _evaluationGate = new(4, 4);
+
     // [SUA LOI NGHIEM TRONG] Xem ExecuteAsync: khi Win32_ProcessStartTrace
     // khong khoi dong duoc (thuong xuyen — can quyen Administrator), TOAN BO
     // tang danh gia tin cay tien trinh khong chay, va truoc day dieu do chi
@@ -105,7 +118,16 @@ public sealed class DriverSimulatorService : BackgroundService
                 return;
             }
 
-            var decision = await _trustEngine.EvaluateAsync(fullPath, pid, CancellationToken.None);
+            ProcessTrustDecision decision;
+            await _evaluationGate.WaitAsync();
+            try
+            {
+                decision = await _trustEngine.EvaluateAsync(fullPath, pid, CancellationToken.None);
+            }
+            finally
+            {
+                _evaluationGate.Release();
+            }
             if (!decision.Allowed)
             {
                 // [SUA LOI NGHIEM TRONG] Kill() duoi quyen LocalSystem la mot
